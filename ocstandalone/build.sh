@@ -43,7 +43,7 @@ aapt2 link -o "$OUT/base.apk" -I "$AJ" \
 	--manifest "$ROOT/AndroidManifest.xml" \
 	--java "$OUT/gen" \
 	--min-sdk-version 24 \
-	--target-sdk-version 35 \
+	--target-sdk-version 28 \
 	-A "$ROOT/assets" \
 	--auto-add-overlay \
 	"$OUT/res.zip"

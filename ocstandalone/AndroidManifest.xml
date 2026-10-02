@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- targetSdk 28 is required on purpose. Android 10's W^X policy denies
+     execve() of app_data_file for apps targeting API 29+, and the bundled
+     glibc loader plus opencode binary must be executed from the app's own
+     files dir. Termux is targetSdk 28 for the same reason. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="app.opencode.standalone"
     android:versionCode="1"

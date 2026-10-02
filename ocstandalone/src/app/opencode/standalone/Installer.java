@@ -6,7 +6,6 @@ import android.content.res.AssetManager;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.OutputStream;
 
 public final class Installer {
 
@@ -21,7 +20,7 @@ public final class Installer {
     };
 
     public interface Progress {
-        void onProgress(int percent, String label);
+        void onBytes(long copied);
     }
 
     private Installer() {
@@ -66,42 +65,48 @@ public final class Installer {
         File lib = libDir(c);
         if (!lib.exists() && !lib.mkdirs()) throw new IllegalStateException("cannot create " + lib);
 
-        long total = 0;
-        for (String l : LIBS) total += am.openFd(l).getLength();
-        total += am.openFd(BIN).getLength();
-
-        long done = 0;
+        // assets are deflated inside the apk, so AssetManager.openFd() throws
+        // "probably compressed" -- stream them with open() instead.
+        Counter counter = new Counter();
         for (String name : LIBS) {
             File out = new File(c.getFilesDir(), name);
-            done += copy(am, name, out);
+            copy(am, name, out, counter, p);
             out.setReadable(true, true);
             out.setExecutable(true, true);
-            if (p != null) p.onProgress((int) (done * 100 / total), name);
         }
         File bin = binary(c);
-        done += copy(am, BIN, bin);
+        copy(am, BIN, bin, counter, p);
         bin.setReadable(true, true);
         bin.setExecutable(true, true);
-        if (p != null) p.onProgress(100, "ready");
+        if (p != null) p.onBytes(counter.n);
 
         FileOutputStream fo = new FileOutputStream(new File(c.getFilesDir(), ".payload-stamp"));
         fo.write(STAMP.getBytes());
         fo.close();
     }
 
-    private static long copy(AssetManager am, String name, File out) throws Exception {
+    private static final class Counter {
+        long n;
+    }
+
+    private static void copy(AssetManager am, String name, File out, Counter c, Progress p) throws Exception {
         InputStream in = am.open(name);
-        OutputStream os = new FileOutputStream(out);
-        byte[] buf = new byte[1 << 16];
-        long total = 0;
-        int n;
-        while ((n = in.read(buf)) > 0) {
-            os.write(buf, 0, n);
-            total += n;
+        try {
+            FileOutputStream os = new FileOutputStream(out);
+            try {
+                byte[] buf = new byte[1 << 16];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    os.write(buf, 0, n);
+                    c.n += n;
+                    if (p != null) p.onBytes(c.n);
+                }
+                os.flush();
+            } finally {
+                os.close();
+            }
+        } finally {
+            in.close();
         }
-        os.flush();
-        os.close();
-        in.close();
-        return total;
     }
 }

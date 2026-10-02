@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "ocstandalone";
     private static final String URL = "http://127.0.0.1:4096/";
-    private static final int MAX_RETRIES = 60;
+    private static final int MAX_RETRIES = 180;
     private static final long SPAWN_THROTTLE = 5000;
     private static final int REQ_FILE = 101;
     private static final int REQ_MIC = 102;
@@ -103,6 +103,9 @@ public class MainActivity extends Activity {
 
     private void askNotification() {
         if (Build.VERSION.SDK_INT < 33) return;
+        // apps below targetSdk 33 get the prompt automatically when the first
+        // notification channel is created, and the permission is not requestable
+        if (getApplicationInfo().targetSdkVersion < 33) return;
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] { android.Manifest.permission.POST_NOTIFICATIONS }, REQ_NOTIF);
@@ -125,16 +128,17 @@ public class MainActivity extends Activity {
             return;
         }
         bar.setVisibility(View.VISIBLE);
-        status.setText("Downloading runtime (one time, ~180 MB)...");
+        status.setText("Preparing runtime (one time, ~180 MB)...");
         status.setVisibility(View.VISIBLE);
         new Thread(new Runnable() {
             public void run() {
                 try {
                     Installer.install(MainActivity.this, new Installer.Progress() {
-                        public void onProgress(final int percent, final String label) {
+                        public void onBytes(final long copied) {
                             runOnUiThread(new Runnable() {
                                 public void run() {
-                                    status.setText("Installing runtime... " + percent + "%");
+                                    status.setText("Installing runtime... "
+                                            + (copied / 1048576) + " MB");
                                 }
                             });
                         }
@@ -161,7 +165,7 @@ public class MainActivity extends Activity {
     private void beginServer() {
         askStorage();
         ensureServer();
-        load();
+        loadWhenReady();
     }
 
     private void ensureServer() {
@@ -173,6 +177,23 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             Log.e(TAG, "cannot start service", t);
         }
+    }
+
+    private void loadWhenReady() {
+        if (ping()) {
+            load();
+            return;
+        }
+        if (retries >= MAX_RETRIES) return;
+        retries++;
+        bar.setVisibility(View.VISIBLE);
+        web.postDelayed(new Runnable() {
+            public void run() {
+                if (isFinishing()) return;
+                ensureServer();
+                loadWhenReady();
+            }
+        }, 1000);
     }
 
     private void load() {
@@ -201,7 +222,10 @@ public class MainActivity extends Activity {
 
         @Override
         public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
-            if (req != null && req.isForMainFrame()) retry();
+            if (req != null && req.isForMainFrame()) {
+                view.loadUrl("about:blank");
+                retry();
+            }
         }
 
         @Override
@@ -325,20 +349,7 @@ public class MainActivity extends Activity {
     }
 
     private void retry() {
-        if (retries >= MAX_RETRIES) return;
-        retries++;
-        bar.setVisibility(View.VISIBLE);
-        web.postDelayed(new Runnable() {
-            public void run() {
-                if (ping()) {
-                    retries = 0;
-                    web.loadUrl(URL);
-                } else {
-                    ensureServer();
-                    retry();
-                }
-            }
-        }, 1000);
+        loadWhenReady();
     }
 
     private boolean ping() {
@@ -378,9 +389,11 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (web == null) return;
+        if (!Installer.isInstalled(this)) return;
         if (!ping()) {
             bar.setVisibility(View.VISIBLE);
             ensureServer();
+            loadWhenReady();
         }
     }
 
