@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">opencode solo</string>
+    <string name="notif_channel">opencode server</string>
+    <string name="notif_title">opencode server</string>
+    <string name="notif_text">Serving the chat UI on port 4096</string>
+    <string name="notif_stop">Stop</string>
+</resources>

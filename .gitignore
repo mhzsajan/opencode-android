@@ -1,0 +1,20 @@
+# build outputs
+build/
+*.apk
+*.apk.idsig
+*.keystore
+*.jks
+*.idsig
+
+# android.jar: 27 MB, fetched per README
+sdk/
+*.jar
+
+# bundled runtime: 177 MB, exceeds GitHub's 100 MB per-file limit.
+# recreate with ./stage-assets.sh
+ocstandalone/assets/opencode-bin
+ocstandalone/assets/lib/
+
+# local scratch
+*.log
+.DS_Store
