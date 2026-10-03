@@ -37,6 +37,30 @@ Both are thin WebView shells around `opencode serve`; they differ in where the s
 
 ## Build
 
+### Windows (primary, since 2026-10-03)
+
+Needs an Android SDK (`ANDROID_HOME`, e.g. `G:\dev\android-sdk`) with `build-tools` and
+at least one platform, plus a JDK 17+ (`JAVA_HOME`; Android Studio's JBR works too).
+
+```powershell
+# 1. restore the runtime payload (181 MB, not committed) from any APK that already
+#    contains it - the GitHub release asset or a previous build:
+.\ocstandalone\stage-assets.ps1 -FromApk C:\path\opencode-android-v1.0.apk
+
+# 2. signing keystore (also not committed - keep a backup OUTSIDE the repo):
+#    copy <backup>\standalone-launcher.keystore ocstandalone\build\launcher.keystore
+
+# 3. build
+$env:KS_ALIAS='<alias>'; $env:KS_PASS='<password>'
+powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1
+```
+
+Output: `ocstandalone\build\opencode-solo.apk`. `build.ps1` fails with instructions if
+the keystore or payload is missing, and picks `android.jar` from the SDK's newest
+platform.
+
+### Termux (legacy - the original pipeline, kept for reference)
+
 Requires Termux with `aapt2`, `d8`, `apksigner`, `openjdk-21`, and a `android.jar`.
 
 ```sh

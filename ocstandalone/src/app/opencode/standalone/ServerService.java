@@ -17,6 +17,8 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Map;
 
 public class ServerService extends Service {
@@ -123,6 +125,18 @@ public class ServerService extends Service {
     private void supervise() {
         long backoff = 1000;
         while (!stopping) {
+            if (portServed()) {
+                // Something already answers on PORT - typically the opencode CLI
+                // running in Termux. Adopt it instead of fighting for the port:
+                // our own spawn would die rc=1 (EADDRINUSE) in a restart loop,
+                // which is what the endless "server exited rc=1" spam was.
+                Log.i(TAG, "port " + PORT + " already served externally, adopting");
+                goForeground("serving on port " + PORT + " (existing)");
+                while (!stopping && portServed()) sleep(5000);
+                if (stopping) break;
+                Log.i(TAG, "external server gone, spawning our own");
+                // fall through to launch()
+            }
             boolean ok = launch();
             if (stopping) break;
             if (ok) {
@@ -138,6 +152,24 @@ public class ServerService extends Service {
                 sleep(backoff);
                 backoff = Math.min(backoff * 2, 30000);
             }
+        }
+    }
+
+    /** True if something already answers on PORT. Short timeouts so the supervisor
+     *  thread can never hang on a frozen/half-open listener. */
+    private boolean portServed() {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL("http://127.0.0.1:" + PORT + "/").openConnection();
+            c.setConnectTimeout(700);
+            c.setReadTimeout(700);
+            c.setRequestMethod("GET");
+            c.getResponseCode();
+            return true;
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
         }
     }
 

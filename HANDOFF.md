@@ -19,6 +19,15 @@ identical icons caused confusion) — both remain in this repo and `build.sh` ca
 **Release:** v1.0 published at https://github.com/mhzsajan/opencode-android/releases/tag/v1.0
 with `opencode-android-v1.0.apk` attached (see section 6).
 
+**Pending until the phone is reconnected (user took it, 2026-10-03 afternoon):**
+1. `adb install -r C:\Users\o0o\Documents\opencode-android\ocstandalone\build\opencode-solo.apk`
+   (the port-adoption fix, already built on the PC). Verify: no more
+   `server exited rc=1` loop while Termux serves 4096; log shows `adopting`.
+2. After Termux is uninstalled: reopen the app and verify the handover - log should show
+   `external server gone, spawning our own` and the UI must still load.
+3. If both verify, consider cutting v1.1 (bump `android:versionCode`/`versionName` in
+   `ocstandalone/AndroidManifest.xml`) and attaching the APK to a new GitHub release.
+
 ---
 
 ## 2. What is installed on this phone
@@ -92,6 +101,13 @@ forever and `load()` was never reached — the WebView (started `GONE`, only sho
 either copy an `auth.json` into `filesDir/home/.local/share/opencode/`, or add a
 "paste your key" screen.
 
+**Second fix, same day: port-conflict adoption.** While the Termux opencode CLI served
+port 4096, the app's own spawn could never bind → `server exited rc=1, restarting` in an
+endless loop (EADDRINUSE). `ServerService.supervise()` now pings the port first and
+**adopts** an already-serving instance (recheck every 5 s; if the external server
+disappears - e.g. Termux uninstalled - it spawns the bundled one). Log signature:
+`port 4096 already served externally, adopting`.
+
 ---
 
 ## 5. Repo
@@ -144,16 +160,26 @@ Repo: **https://github.com/mhzsajan/opencode-android** (private, account `mhzsaj
 
 - Pushed from the Windows PC, where `gh` CLI was already authenticated. Termux has no
   GitHub credentials and does not need them.
-- **Sync topology: phone = dev working copy; PC clone = GitHub relay.**
-  PC clone lives at `C:\Users\o0o\Documents\opencode-android` with two remotes:
-  `origin` (GitHub) and `phone` (the Termux repo over the adb/ssh bridge).
-  After committing on the phone, sync with:
-  ```sh
-  # on the PC:
-  git fetch phone && git merge --ff-only phone/master && git push origin master
-  ```
-- The phone repo itself has no remotes; pushing from Termux would need a PAT, which is
-  why the relay exists.
+- **Sync topology (updated 2026-10-03 pm): the PC clone is now the canonical working
+  copy.** It lives at `C:\Users\o0o\Documents\opencode-android` (remotes: `origin` =
+  GitHub, `phone` = the Termux repo over the adb/ssh bridge, kept only for reference).
+  Develop on the PC, commit there, `git push origin master` directly. The phone repo is
+  frozen at whatever was last relayed (Termux may be uninstalled by the user).
+- **Windows build pipeline (replaces phone builds):**
+  - `ocstandalone/build.ps1` - full port of build.sh. Needs `ANDROID_HOME`
+    (`G:\dev\android-sdk`, build-tools 36/37) and `JAVA_HOME` (Eclipse Adoptium JDK 21;
+    falls back to Android Studio's JBR).
+  - `ocstandalone/stage-assets.ps1 -FromApk <apk>` - restores the 181 MB payload
+    (opencode-bin + glibc lib) from any built APK or release asset (they live inside it).
+  - Keystore: `ocstandalone\build\launcher.keystore` (gitignored). Backup copy:
+    `C:\Users\o0o\Documents\opencode-backup\keystores\standalone-launcher.keystore` -
+    **without it, future builds cannot update the installed app** (signature mismatch).
+  - The backup folder also holds the old Termux opencode CLI data
+    (`opencode-cli-data\`: auth.json key + session db).
+  - Build: `$env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'` then
+    `powershell -ExecutionPolicy Bypass -File ocstandalone\build.ps1`
+  - Proven 2026-10-03: the PC-built APK installed over v1.0 with `adb install -r`
+    (same signature) and ran fine.
 
 **Release v1.0 (2026-10-03):** tag `v1.0`, asset `opencode-android-v1.0.apk` (arm64, ~60 MB,
 SHA-256 `66e94cff1b24b426c56dabb1a80356b707f9f2592cea546f99f5f5376ec5a6eb`). Published from
