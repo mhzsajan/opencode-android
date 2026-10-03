@@ -131,23 +131,22 @@ EOF
 
 ---
 
-## 6. GitHub push — BLOCKED, needs you
+## 6. GitHub push — DONE (2026-10-03)
 
-Not pushed. Blockers, all requiring you:
+Repo: **https://github.com/mhzsajan/opencode-android** (private, account `mhzsajan`).
 
-1. **No repository URL.** I will not guess one.
-2. **No `gh` CLI** installed in Termux.
-3. **No git identity** configured (`user.name` / `user.email` are empty).
-4. **No credentials.** No SSH private key (only `~/.ssh/authorized_keys`), and no HTTPS
-   token.
-
-To finish it, give me the repo URL plus one of:
-
-- a GitHub PAT (HTTPS), or
-- have me generate an SSH key and you add the public key to GitHub, or
-- run `git remote add origin <url>` yourself, then I can commit-ready the rest.
-
-Everything is committed locally already, so pushing is a one-liner once credentials exist.
+- Pushed from the Windows PC, where `gh` CLI was already authenticated. Termux has no
+  GitHub credentials and does not need them.
+- **Sync topology: phone = dev working copy; PC clone = GitHub relay.**
+  PC clone lives at `C:\Users\o0o\Documents\opencode-android` with two remotes:
+  `origin` (GitHub) and `phone` (the Termux repo over the adb/ssh bridge).
+  After committing on the phone, sync with:
+  ```sh
+  # on the PC:
+  git fetch phone && git merge --ff-only phone/master && git push origin master
+  ```
+- The phone repo itself has no remotes; pushing from Termux would need a PAT, which is
+  why the relay exists.
 
 ---
 
