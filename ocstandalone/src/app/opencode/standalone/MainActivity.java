@@ -44,6 +44,8 @@ public class MainActivity extends Activity {
     private ProgressBar bar;
     private TextView status;
     private int retries = 0;
+    private boolean waiting = false;
+    private boolean loadedOnce = false;
     private long lastSpawn = 0;
     private long lastBack = 0;
     private ValueCallback<Uri[]> filePath;
@@ -65,7 +67,7 @@ public class MainActivity extends Activity {
 
         web = new WebView(this);
         web.setBackgroundColor(0xFF0B0B0D);
-        web.setVisibility(View.GONE);
+        web.setVisibility(View.VISIBLE); // handoff step 2: never hide it, so a failed load can surface a real error page
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setDatabaseEnabled(true);
@@ -163,6 +165,7 @@ public class MainActivity extends Activity {
     }
 
     private void beginServer() {
+        Log.d(TAG, "beginServer");
         askStorage();
         ensureServer();
         loadWhenReady();
@@ -180,26 +183,50 @@ public class MainActivity extends Activity {
     }
 
     private void loadWhenReady() {
-        if (ping()) {
-            load();
-            return;
-        }
-        if (retries >= MAX_RETRIES) return;
-        retries++;
-        bar.setVisibility(View.VISIBLE);
-        web.postDelayed(new Runnable() {
+        // ping() must not run on the main thread: NetworkOnMainThreadException
+        // made it fail forever, which was the "blank UI" bug.
+        if (waiting) return;
+        waiting = true;
+        new Thread(new Runnable() {
             public void run() {
-                if (isFinishing()) return;
-                ensureServer();
-                loadWhenReady();
+                final boolean ok = ping();
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (ok) {
+                            waiting = false;
+                            if (!loadedOnce) load();
+                            return;
+                        }
+                        if (retries >= MAX_RETRIES) {
+                            waiting = false;
+                            Log.d(TAG, "loadWhenReady: giving up after " + retries + " attempts");
+                            return;
+                        }
+                        retries++;
+                        Log.d(TAG, "loadWhenReady attempt " + retries + " (ping failed)");
+                        bar.setVisibility(View.VISIBLE);
+                        web.postDelayed(new Runnable() {
+                            public void run() {
+                                if (isFinishing()) {
+                                    waiting = false;
+                                    return;
+                                }
+                                ensureServer();
+                                waiting = false;
+                                loadWhenReady();
+                            }
+                        }, 1000);
+                    }
+                });
             }
-        }, 1000);
+        }, "oc-ping").start();
     }
 
     private void load() {
         retries = 0;
         bar.setVisibility(View.VISIBLE);
         web.setVisibility(View.VISIBLE);
+        Log.d(TAG, "load " + URL);
         web.loadUrl(URL);
     }
 
@@ -217,12 +244,17 @@ public class MainActivity extends Activity {
 
         @Override
         public void onPageFinished(WebView view, String url) {
+            Log.d(TAG, "page finished: " + url);
+            if (url != null && url.startsWith("http")) loadedOnce = true;
             bar.setVisibility(View.GONE);
         }
 
         @Override
         public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
             if (req != null && req.isForMainFrame()) {
+                Log.d(TAG, "main frame error " + err.getErrorCode() + ": " + err.getDescription()
+                        + " url=" + req.getUrl());
+                loadedOnce = false;
                 view.loadUrl("about:blank");
                 retry();
             }
@@ -230,7 +262,10 @@ public class MainActivity extends Activity {
 
         @Override
         public void onReceivedHttpError(WebView view, WebResourceRequest req, WebResourceResponse err) {
-            if (req != null && req.isForMainFrame()) retry();
+            if (req != null && req.isForMainFrame()) {
+                Log.d(TAG, "http error " + err.getStatusCode() + " url=" + req.getUrl());
+                retry();
+            }
         }
     }
 
@@ -363,8 +398,10 @@ public class MainActivity extends Activity {
             InputStream in = c.getInputStream();
             in.read(new byte[1]);
             in.close();
+            Log.d(TAG, "ping ok code=" + code);
             return code >= 200 && code < 400;
         } catch (Throwable t) {
+            Log.d(TAG, "ping failed: " + t);
             return false;
         } finally {
             if (c != null) c.disconnect();
@@ -390,11 +427,11 @@ public class MainActivity extends Activity {
         super.onResume();
         if (web == null) return;
         if (!Installer.isInstalled(this)) return;
-        if (!ping()) {
-            bar.setVisibility(View.VISIBLE);
-            ensureServer();
-            loadWhenReady();
-        }
+        // no synchronous ping here (it would hit NetworkOnMainThreadException);
+        // the async chain decides whether a reload is needed via loadedOnce
+        retries = 0;
+        ensureServer();
+        loadWhenReady();
     }
 
     @Override

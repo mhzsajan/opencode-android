@@ -6,9 +6,11 @@ Written 2026-10-02 ~10:20. Read this first after any disconnect.
 
 ## 1. TL;DR
 
-Two Android apps exist. The **Termux-backed one works**. The **standalone one is 90% done** —
-its server runs perfectly with no Termux, but its WebView never finishes loading, so the UI
-shows a blank dark screen with a spinner. That is the one open bug.
+Two Android apps exist and **both work now**. The Termux-backed one (oclaunch) always worked.
+The standalone one's blank-UI bug was **fixed on 2026-10-03** — root cause: `ping()` ran on
+the main thread and always threw `NetworkOnMainThreadException`, so `load()` was never
+reached; see section 4. Remaining known gap: the standalone app needs a provider API key
+configured inside it before chat works (bottom of section 4).
 
 ---
 
@@ -44,35 +46,44 @@ Both use the same launcher icon, so pick carefully on the home screen. `oclaunch
 
 ---
 
-## 4. Open bug — standalone UI is blank
+## 4. Standalone UI blank bug — FIXED 2026-10-03
 
-**Symptom:** dark screen, spinner in the middle, forever. The status bar shows a download
-arrow, so a load was attempted. `onPageFinished` never fires (the app's ProgressBar is still
-visible, and that bar is only hidden in `onPageFinished`).
+**Original symptom:** dark screen, spinner forever; `onPageFinished` never fired.
 
-**Leading hypothesis (not yet confirmed):** the app's own `ping()` is failing, so `load()` is
-never reached. In `MainActivity` the WebView starts as `View.GONE` and only becomes visible
-inside `load()`. If `ping()` never succeeds you see exactly this: the root FrameLayout's dark
-background plus the spinner, with the WebView never shown.
+**Root cause (confirmed by instrumentation):** `ping()` used `HttpURLConnection` **on the
+main thread**, so every attempt threw `android.os.NetworkOnMainThreadException`. The old
+`catch (Throwable) { return false; }` swallowed it silently, so `loadWhenReady()` retried
+forever and `load()` was never reached — the WebView (started `GONE`, only shown in
+`load()`) never appeared. Exactly the observed symptom.
 
-**Next steps, in order:**
+**The previous session's hypothesis was wrong on two counts:**
+- It was not "unconfirmed" — it was ping failing, but for a non-network reason.
+- The network security config is **fine**. No `main frame error` was ever logged after
+  the fix, and cleartext was never exercised before it. Do **not** remove
+  `res/xml/network_security_config.xml`: at `targetSdk 28` cleartext defaults to *denied*,
+  and that config is what whitelists `127.0.0.1`/`localhost`. (The old advice "targetSdk 28
+  permits cleartext by default" was backwards.)
 
-1. Add a `Log.d(TAG, "ping=" + ok)` inside `ping()` and a log in `loadWhenReady()` /
-   `load()`. Watch with `logcat -s ocstandalone`. This confirms or kills the hypothesis in
-   one build.
-2. Cheap belt-and-braces fix regardless: stop hiding the WebView — set it `VISIBLE` at
-   creation, and drive the spinner with a separate view. Then a stuck load shows the real
-   Chromium error page instead of a featureless dark screen.
-3. If `ping()` is the problem, suspect the network security config. The app reuses
-   `res/xml/network_security_config.xml` from oclaunch, which permits cleartext for
-   `127.0.0.1` and `localhost` only. Try removing the config entirely — with `targetSdk 28`
-   cleartext is permitted by default, so the config is not needed and may be the thing
-   breaking it.
-4. Note the standalone server starts with a **fresh, empty `HOME`**
-   (`filesDir/home`), so it has **no `auth.json` and no API key**. Even once the UI paints,
-   the chat will not work until a provider key is configured inside the app. Plan for this:
-   either copy an `auth.json` into `filesDir/home/.local/share/opencode/`, or add a
-   "paste your key" screen. This is a known gap, not a mystery bug.
+**Fix in `MainActivity.java` (all committed):**
+- `ping()` runs on a background thread (`oc-ping`); results marshalled via `runOnUiThread`.
+- `waiting` flag prevents duplicate retry chains (old code ran two: beginServer + onResume,
+  which doubled the retry counter).
+- `loadedOnce` tracks whether the real page rendered, so `onResume` no longer pings
+  synchronously; it resets `retries`, then `ensureServer()` + `loadWhenReady()`.
+- WebView now starts `VISIBLE` (was `View.GONE`), so a future failure surfaces a real
+  Chromium error page instead of a featureless dark screen.
+- Diagnostic `Log.d(TAG, ...)` lines in ping/loadWhenReady/load/onPageFinished/
+  onReceivedError/onReceivedHttpError. Tag: `ocstandalone`
+  (`adb logcat -s ocstandalone:*`).
+
+**Verified 2026-10-03:** cold start → `ping ok code=200` ~2 s after spawn →
+`load http://127.0.0.1:4096/` → `page finished` → full UI renders (screenshot confirmed).
+
+**Known gap (not a bug):** the standalone server starts with a **fresh, empty `HOME`**
+(`filesDir/home`), so it has **no `auth.json` and no API key**, and the UI shows
+"Nothing here yet". Chat will not work until a provider key is configured inside the app:
+either copy an `auth.json` into `filesDir/home/.local/share/opencode/`, or add a
+"paste your key" screen.
 
 ---
 
