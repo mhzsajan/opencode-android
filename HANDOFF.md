@@ -12,6 +12,13 @@ the main thread and always threw `NetworkOnMainThreadException`, so `load()` was
 reached; see section 4. Remaining known gap: the standalone app needs a provider API key
 configured inside it before chat works (bottom of section 4).
 
+**Device state (2026-10-03):** only `app.opencode.standalone` is installed. `app.opencode.launcher`
+and the official `cc.agentlabs.opencode` app were uninstalled at the user's request (too many
+identical icons caused confusion) — both remain in this repo and `build.sh` can rebuild them.
+
+**Release:** v1.0 published at https://github.com/mhzsajan/opencode-android/releases/tag/v1.0
+with `opencode-android-v1.0.apk` attached (see section 6).
+
 ---
 
 ## 2. What is installed on this phone
@@ -147,6 +154,15 @@ Repo: **https://github.com/mhzsajan/opencode-android** (private, account `mhzsaj
   ```
 - The phone repo itself has no remotes; pushing from Termux would need a PAT, which is
   why the relay exists.
+
+**Release v1.0 (2026-10-03):** tag `v1.0`, asset `opencode-android-v1.0.apk` (arm64, ~60 MB,
+SHA-256 `66e94cff1b24b426c56dabb1a80356b707f9f2592cea546f99f5f5376ec5a6eb`). Published from
+the PC with:
+```sh
+gh release create v1.0 <path-to-apk> --repo mhzsajan/opencode-android --notes-file <notes.md>
+```
+For the next release: bump versionCode/versionName in `build.sh`, rebuild, then repeat with
+`v1.1`.
 
 ---
 
