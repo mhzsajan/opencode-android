@@ -175,37 +175,34 @@ public class ServerService extends Service {
     }
 
     /**
-     * Bun's Happy Eyeballs needs both address families to be worth having. The
-     * DNS fixes live here because the app has no /etc/resolv.conf: Android keeps
-     * its resolver private, so the bundled glibc binary has nothing to read and
-     * falls back to a loopback nameserver that nothing listens on. Without these
-     * two files, every upstream fetch fails with
-     * "Cannot connect to API: Was there a typo in the url or port?".
+     * Network environment for the bundled server.
      *
-     * They are optional: if staging them fails the server still starts, just
-     * without the fix.
+     * Measured on the test phone, same Wi-Fi, same moment, same binary:
+     *
+     *   Termux UID 10845 (chat worked, 6.7s)
+     *     IPv6 remote 2606:4700:4860:1200::95ad:42ac:443 -- the real Cloudflare
+     *     edge for opencode.ai. Zero IPv4 sockets.
+     *     RESOLV_CONF unset.
+     *
+     *   App UID 10863, v1.3 (chat failed, ~69s)
+     *     IPv6 remote 4801:2004:4148::443 -- a wrong host entirely.
+     *     RESOLV_CONF pointed at a file we generated listing 8.8.8.8/1.1.1.1.
+     *
+     * So this network returns poisoned answers for opencode.ai over the public
+     * resolvers, while Android's own resolver path returns the correct Cloudflare
+     * address. The fix is therefore to ship no resolver override at all and let
+     * the child resolve the way Termux's does, exactly as v1.2 did.
+     *
+     * DNS_RESULT_ORDER/ DNS_AUTO_FALLBACK only choose between A and AAAA records
+     * that already came back correctly, and every socket observed on the working
+     * path was IPv6, so keep them. Do NOT re-add RESOLV_CONF, RES_OPTIONS, or a
+     * generated resolv.conf without first re-running the probe above: that change
+     * is what produced the wrong-host connection in v1.3.
      */
     private static final String[][] NET_ENV = {
             {"DNS_RESULT_ORDER", "ipv6first"},
             {"DNS_AUTO_FALLBACK", "1"},
     };
-
-    private void stageNetFiles(File home) {
-        File etc = new File(home, "etc");
-        if (!etc.exists()) etc.mkdirs();
-
-        File rc = new File(etc, "resolv.conf");
-        FileOutputStream out = null;
-        try {
-            out = new FileOutputStream(rc);
-            out.write("nameserver 8.8.8.8\nnameserver 1.1.1.1\n".getBytes("UTF-8"));
-            out.close();
-            Log.i(TAG, "wrote " + rc);
-        } catch (Throwable t) {
-            Log.w(TAG, "could not write resolv.conf", t);
-            try { if (out != null) out.close(); } catch (IOException ignored) { }
-        }
-    }
 
     private boolean launch() {
         File lib = Installer.libDir(this);
@@ -218,7 +215,6 @@ public class ServerService extends Service {
         File home = Installer.home(this);
         File project = Projects.dir(this);
         if (!project.exists()) project.mkdirs();
-        stageNetFiles(home);
         File tmp = getCacheDir();
         File log = new File(home, "server.log");
 
@@ -243,8 +239,6 @@ public class ServerService extends Service {
         env.put("XDG_CACHE_HOME", new File(home, ".cache").getAbsolutePath());
         env.put("OPENCODE_DISABLE_AUTOUPDATE", "1");
         for (String[] kv : NET_ENV) env.put(kv[0], kv[1]);
-        env.put("RESOLV_CONF", new File(home, "etc/resolv.conf").getAbsolutePath());
-        env.put("RES_OPTIONS", "timeout:2 attempts:2");
 
         try {
             proc = pb.start();
