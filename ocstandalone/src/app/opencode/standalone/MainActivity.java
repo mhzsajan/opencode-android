@@ -99,9 +99,39 @@ public class MainActivity extends Activity {
 
         setContentView(root);
 
+        // First run goes through Setup so permissions and the provider key are
+        // chosen deliberately. v1.2 skipped this, which is how a phone with no
+        // storage grant and no key still looked "installed but broken".
+        if (!getSharedPreferences(Setup.PREFS, MODE_PRIVATE).getBoolean("seen", false)) {
+            startActivity(new Intent(this, Setup.class));
+            finish();
+            return;
+        }
+
         askNotification();
         bootstrap();
     }
+
+    /** Back into Setup, to change permissions or the provider key later. */
+    public void openSetup() {
+        startActivity(new Intent(this, Setup.class));
+    }
+
+    /**
+     * The bundled server resolves opencode.ai to a Cloudflare address whose IPv4
+     * route is blackholed on some networks (verified on the test phone's Wi-Fi:
+     * IPv4 to 172.65.90.20:443 never leaves SYN_SENT, while the same host over
+     * IPv6 answers). opencode's Bun runtime honours DNS_RESULT_ORDER and
+     * AUTO_FALLBACK, so ask it to prefer IPv6 but still try IPv4 -- which is
+     * what Termux's own server was already doing successfully.
+     *
+     * Without this the server hangs for ~60s per request and returns
+     * "Cannot connect to API: Was there a typo in the url or port?".
+     */
+    private static final String[][] NET_ENV = {
+            {"DNS_RESULT_ORDER", "ipv6first"},
+            {"DNS_AUTO_FALLBACK", "1"},
+    };
 
     private void askNotification() {
         if (Build.VERSION.SDK_INT < 33) return;

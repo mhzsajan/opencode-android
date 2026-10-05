@@ -173,6 +173,39 @@ public class ServerService extends Service {
         }
     }
 
+    /**
+     * Bun's Happy Eyeballs needs both address families to be worth having. The
+     * DNS fixes live here because the app has no /etc/resolv.conf: Android keeps
+     * its resolver private, so the bundled glibc binary has nothing to read and
+     * falls back to a loopback nameserver that nothing listens on. Without these
+     * two files, every upstream fetch fails with
+     * "Cannot connect to API: Was there a typo in the url or port?".
+     *
+     * They are optional: if staging them fails the server still starts, just
+     * without the fix.
+     */
+    private static final String[][] NET_ENV = {
+            {"DNS_RESULT_ORDER", "ipv6first"},
+            {"DNS_AUTO_FALLBACK", "1"},
+    };
+
+    private void stageNetFiles(File home) {
+        File etc = new File(home, "etc");
+        if (!etc.exists()) etc.mkdirs();
+
+        File rc = new File(etc, "resolv.conf");
+        FileOutputStream out = null;
+        try {
+            out = new FileOutputStream(rc);
+            out.write("nameserver 8.8.8.8\nnameserver 1.1.1.1\n".getBytes("UTF-8"));
+            out.close();
+            Log.i(TAG, "wrote " + rc);
+        } catch (Throwable t) {
+            Log.w(TAG, "could not write resolv.conf", t);
+            try { if (out != null) out.close(); } catch (IOException ignored) { }
+        }
+    }
+
     private boolean launch() {
         File lib = Installer.libDir(this);
         File ld = Installer.loader(this);
@@ -184,6 +217,7 @@ public class ServerService extends Service {
         File home = Installer.home(this);
         File project = Projects.dir(this);
         if (!project.exists()) project.mkdirs();
+        stageNetFiles(home);
         File tmp = getCacheDir();
         File log = new File(home, "server.log");
 
@@ -207,6 +241,9 @@ public class ServerService extends Service {
         env.put("XDG_CONFIG_HOME", new File(home, ".config").getAbsolutePath());
         env.put("XDG_CACHE_HOME", new File(home, ".cache").getAbsolutePath());
         env.put("OPENCODE_DISABLE_AUTOUPDATE", "1");
+        for (String[] kv : NET_ENV) env.put(kv[0], kv[1]);
+        env.put("RESOLV_CONF", new File(home, "etc/resolv.conf").getAbsolutePath());
+        env.put("RES_OPTIONS", "timeout:2 attempts:2");
 
         try {
             proc = pb.start();

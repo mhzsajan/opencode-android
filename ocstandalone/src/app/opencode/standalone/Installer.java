@@ -85,6 +85,11 @@ public final class Installer {
         fo.close();
     }
 
+    /** Where the service stages the resolv.conf the glibc binary needs. */
+    public static File netDir(Context c) {
+        return new File(home(c), "etc");
+    }
+
     private static final class Counter {
         long n;
     }
