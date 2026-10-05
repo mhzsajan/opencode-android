@@ -265,6 +265,10 @@ public class ServerService extends Service {
                         w.write(line);
                         w.write("\n");
                         w.flush();
+                        // mirror into logcat: the child's own log file lives in
+                        // app-private storage and is unreadable over adb, which
+                        // made the "Cannot connect to API" cause invisible.
+                        Log.d(TAG, "srv| " + line);
                     }
                 } catch (Throwable ignored) {
                 } finally {
