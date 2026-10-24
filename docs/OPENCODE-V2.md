@@ -289,7 +289,7 @@ the released x64 APK:
 
 | check | result |
 |---|---|
-| first launch | Setup screen renders, 8 permission groups listed |
+| first launch | Setup screen renders, 8 permission groups listed (`docs/evidence/first-run-setup.png`) |
 | server | `/api/info` → `{"version":"2.1.4","pid":32726,…}` through the auth proxy on 4097 |
 | model call | `opencode` / `big-pickle`, no API key: reply `hello`, 3 511 in / 3 out, cost 0 |
 | agent shell tool | `uname -m; id -u; echo SANDBOX_OK` → `x86_64`, `10243`, `SANDBOX_OK`, `exit: 0` |

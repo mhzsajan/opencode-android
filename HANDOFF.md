@@ -137,6 +137,9 @@ Logs and screenshots:
 & $adb -s emulator-5554 pull /sdcard/x.png "$env:TEMP\x.png"
 ```
 
+The two committed proof screenshots are `docs/evidence/first-run-setup.png` (the setup screen) and
+`docs/evidence/x64-emulator-shell-tool.png` (the agent's shell tool answering inside the app).
+
 ## 5. Publishing a release
 
 ```powershell
