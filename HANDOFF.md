@@ -32,7 +32,7 @@ Built and verified with `build-tools 36.0.0` + JDK 21 against `platforms/android
 
 | Artifact | Version | Size | SHA-256 |
 |---|---|---|---|
-| `ocstandalone/build/opencode-solo.apk` | 1.4 (code 5) | 62 121 676 | `F8C9…` (recompute after a rebuild: `Get-FileHash`) |
+| `ocstandalone/build/opencode-solo.apk` | 1.4 (code 5) | 62 121 676 | `93570CE4008169A24CD985E438E5246F8198C71C45D62E4DF4E0DCF9D30C253C` |
 | `octermux/build/opencode-termux.apk` | 1.1 (code 2) | 30 003 | `B227814DB61C2FD31E5431A1DD298E756679F48BF29FEA8AB7EF25AEE403F9AA` |
 
 Checks: `apksigner verify` passes; `aapt2 dump badging` shows package/versions; the APK contains
