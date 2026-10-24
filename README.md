@@ -3,6 +3,11 @@
 Latest release: **[v1.4](https://github.com/mhzsajan/opencode-android/releases/tag/v1.4)** —
 standalone app works on-device (DNS fix), plus the small Termux variant.
 
+**opencode v2 (2.1.4) is verified on-device but not yet released** — the v2 API is behind HTTP
+Basic auth that a WebView will not answer, so the app runs a loopback auth proxy. See
+[`docs/OPENCODE-V2.md`](docs/OPENCODE-V2.md). Dev environment (SDK/AVDs on `G:`, no arm64
+emulator possible): [`docs/DEV-ENVIRONMENT.md`](docs/DEV-ENVIRONMENT.md).
+
 Three Android apps that give [opencode](https://github.com/anomalyco/opencode) a phone-native UI.
 All of them are thin WebView shells around `opencode serve`; they differ in where the server
 comes from.
