@@ -11,10 +11,11 @@ comes from.
 | Needs Termux installed | yes, configured once | **no** | yes |
 | APK size | ~30 KB | ~62 MB | ~26 KB |
 | Agent shell / git | yes (Termux's) | no (see below) | yes (Termux's) |
-| Status | **the configuration that is known to work** | UI + server work; upstream network unresolved, see `docs/STANDALONE-NETWORK.md` | legacy, superseded by `octermux` |
+| Status | **the configuration that is known to work** | **works on-device, verified 2026-10-24** (chat included; free models need no key) | legacy, superseded by `octermux` |
 
-`octermux` is the one to use today. `ocstandalone` is the long-term goal (no Termux), and its
-open problem is documented rather than hidden.
+`ocstandalone` now reaches the network and completes chat on the phone. `octermux` remains the
+smaller option and still has Termux's bash/git for the agent. The long history of the standalone
+networking bug is in [`docs/STANDALONE-NETWORK.md`](docs/STANDALONE-NETWORK.md).
 
 ## Terms
 
@@ -36,7 +37,9 @@ open problem is documented rather than hidden.
   stub misbehaves when the ELF layout is rewritten)
 - **no `LD_PRELOAD`**. Termux injects a bionic shim into its own processes that kills the glibc
   loader; a normal app has no such shim, so the environment is simply cleared.
-- a resolver configuration, which is the unresolved part on the app side:
+- a resolver configuration: the bundled glibc looks for Termux's `resolv.conf`, which does not
+  exist for an app. `build.ps1` patches that one path in the bundled `libc.so.6` and
+  `ServerService` writes the phone's DNS servers into it before spawning the server. See
   `docs/STANDALONE-NETWORK.md`.
 
 ## Known limitations
@@ -97,6 +100,14 @@ powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1
 `build.ps1` fails with instructions if the keystore or the payload is missing, and picks
 `android.jar` from the newest installed platform. `stage-assets.ps1` needs only a zip reader,
 so it also works when the source is a release APK.
+
+Two steps in the Windows script matter for correctness:
+
+- it **patches the bundled `libc.so.6`** so glibc reads `files/resolv.conf` instead of Termux's
+  path (see `docs/STANDALONE-NETWORK.md`);
+- it **adds assets and `classes.dex` itself** with explicit forward-slash entry names. `aapt2`
+  with `-A` on Windows writes `assets/lib\libc.so.6` (backslash), which `AssetManager.open()`
+  cannot find — that bug made the first run fail with `FileNotFoundException`.
 
 > **Keystore**: Android will not install an update whose signature differs from the installed
 > app. Keep the keystore outside the repo. If it is lost, the app has to be uninstalled before a

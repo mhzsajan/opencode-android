@@ -175,34 +175,64 @@ public class ServerService extends Service {
     }
 
     /**
-     * Network environment for the bundled server.
+     * Resolver configuration for the bundled server.
      *
-     * Measured on the test phone, same Wi-Fi, same moment, same binary:
+     * The payload is Termux's glibc build, so glibc was compiled with Termux's
+     * resolver path baked in:
      *
-     *   Termux UID 10845 (chat worked, 6.7s)
-     *     IPv6 remote 2606:4700:4860:1200::95ad:42ac:443 -- the real Cloudflare
-     *     edge for opencode.ai. Zero IPv4 sockets.
-     *     RESOLV_CONF unset.
+     *     /data/data/com.termux/files/usr/glibc/etc/resolv.conf
      *
-     *   App UID 10863, v1.3 (chat failed, ~69s)
-     *     IPv6 remote 4801:2004:4148::443 -- a wrong host entirely.
-     *     RESOLV_CONF pointed at a file we generated listing 8.8.8.8/1.1.1.1.
+     * Under app.opencode.standalone that directory does not exist, so
+     * res_init() finds no nameserver and every lookup fails ("Failed to fetch
+     * models.dev ... Unable to connect"). The env vars used in v1.3/v1.4
+     * (RESOLV_CONF, DNS_RESULT_ORDER, DNS_AUTO_FALLBACK) are not read by the
+     * binary at all - a strings scan of opencode-bin finds none of them.
      *
-     * So this network returns poisoned answers for opencode.ai over the public
-     * resolvers, while Android's own resolver path returns the correct Cloudflare
-     * address. The fix is therefore to ship no resolver override at all and let
-     * the child resolve the way Termux's does, exactly as v1.2 did.
-     *
-     * DNS_RESULT_ORDER/ DNS_AUTO_FALLBACK only choose between A and AAAA records
-     * that already came back correctly, and every socket observed on the working
-     * path was IPv6, so keep them. Do NOT re-add RESOLV_CONF, RES_OPTIONS, or a
-     * generated resolv.conf without first re-running the probe above: that change
-     * is what produced the wrong-host connection in v1.3.
+     * Fix: build.ps1 patches that one string in the bundled libc.so.6 to point
+     * at a file this app owns (/data/data/app.opencode.standalone/files/resolv.conf),
+     * and launch() writes the phone's live DNS servers there before spawning the
+     * server. Keep the patched path in sync with RESOLV_CONF below.
      */
-    private static final String[][] NET_ENV = {
-            {"DNS_RESULT_ORDER", "ipv6first"},
-            {"DNS_AUTO_FALLBACK", "1"},
-    };
+    private static final String RESOLV_CONF = "resolv.conf";
+
+    private void writeResolvConf() {
+        java.util.LinkedHashSet<String> servers = new java.util.LinkedHashSet<String>();
+        try {
+            android.net.ConnectivityManager cm =
+                    (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                for (android.net.Network n : cm.getAllNetworks()) {
+                    android.net.LinkProperties lp = cm.getLinkProperties(n);
+                    if (lp == null) continue;
+                    for (java.net.InetAddress a : lp.getDnsServers()) {
+                        if (a == null) continue;
+                        String h = a.getHostAddress();
+                        if (h != null && h.length() > 0) servers.add(h);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "cannot read DNS servers: " + t);
+        }
+        // Public resolvers last: they keep a working network usable if Android's
+        // per-network list is empty (e.g. Wi-Fi just came up).
+        servers.add("8.8.8.8");
+        servers.add("1.1.1.1");
+
+        StringBuilder sb = new StringBuilder();
+        for (String s : servers) sb.append("nameserver ").append(s).append('\n');
+        sb.append("options timeout:5 attempts:2\n");
+
+        File f = new File(getFilesDir(), RESOLV_CONF);
+        try {
+            FileOutputStream out = new FileOutputStream(f);
+            out.write(sb.toString().getBytes("UTF-8"));
+            out.close();
+            Log.i(TAG, "resolv.conf -> " + sb.toString().replace("\n", " | "));
+        } catch (Throwable t) {
+            Log.e(TAG, "cannot write resolv.conf", t);
+        }
+    }
 
     private boolean launch() {
         File lib = Installer.libDir(this);
@@ -217,6 +247,10 @@ public class ServerService extends Service {
         if (!project.exists()) project.mkdirs();
         File tmp = getCacheDir();
         File log = new File(home, "server.log");
+
+        // The bundled libc has this file's path compiled in (see RESOLV_CONF
+        // above); without it glibc cannot resolve anything.
+        writeResolvConf();
 
         ProcessBuilder pb = new ProcessBuilder(
                 ld.getAbsolutePath(),
@@ -238,7 +272,6 @@ public class ServerService extends Service {
         env.put("XDG_CONFIG_HOME", new File(home, ".config").getAbsolutePath());
         env.put("XDG_CACHE_HOME", new File(home, ".cache").getAbsolutePath());
         env.put("OPENCODE_DISABLE_AUTOUPDATE", "1");
-        for (String[] kv : NET_ENV) env.put(kv[0], kv[1]);
 
         try {
             proc = pb.start();

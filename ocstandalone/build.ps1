@@ -51,6 +51,7 @@ $BT = $btDirs[0].FullName
 $AAPT2 = Join-Path $BT 'aapt2.exe'
 $D8 = Join-Path $BT 'd8.bat'
 $APKSIGNER = Join-Path $BT 'apksigner.bat'
+$ZIPALIGN = Join-Path $BT 'zipalign.exe'
 
 # --- android.jar: repo sdk\ first, then the newest installed platform -----
 if (-not $AndroidJar) {
@@ -76,12 +77,39 @@ if (-not (Test-Path (Join-Path $ROOT 'assets\opencode-bin'))) {
     throw "assets missing: run stage-assets.ps1 -FromApk <built-or-release apk>"
 }
 
+# --- patch the bundled glibc resolver path --------------------------------
+# The payload is Termux's glibc build, so glibc's resolver path is compiled in as
+# /data/data/com.termux/files/usr/glibc/etc/resolv.conf -- a directory that does
+# not exist for this app, which leaves the child with no nameserver at all
+# ("Failed to fetch models.dev ... Unable to connect"). Point that single string
+# at a file this app owns; ServerService writes it before spawning the server.
+# It must match ServerService.RESOLV_CONF and fit the original 53-byte slot.
+$RESOLV_OLD = '/data/data/com.termux/files/usr/glibc/etc/resolv.conf'
+$RESOLV_NEW = '/data/data/app.opencode.standalone/files/resolv.conf'
+$libc = Join-Path (Join-Path $ROOT 'assets') 'lib\libc.so.6'
+$libcBytes = [System.IO.File]::ReadAllBytes($libc)
+$libcText = [System.Text.Encoding]::ASCII.GetString($libcBytes)
+if ($libcText.IndexOf($RESOLV_NEW) -ge 0) {
+    Write-Host '==> libc.so.6 resolver path already patched'
+} else {
+    $pos = $libcText.IndexOf($RESOLV_OLD)
+    if ($pos -lt 0) { throw "resolver path not found in $libc (payload changed?)" }
+    if ($RESOLV_NEW.Length -gt $RESOLV_OLD.Length) {
+        throw 'replacement resolver path does not fit the original slot'
+    }
+    $newBytes = [System.Text.Encoding]::ASCII.GetBytes($RESOLV_NEW)
+    [Array]::Copy($newBytes, 0, $libcBytes, $pos, $newBytes.Length)
+    $libcBytes[$pos + $newBytes.Length] = 0
+    [System.IO.File]::WriteAllBytes($libc, $libcBytes)
+    Write-Host "==> patched resolver path in libc.so.6 (offset $pos)"
+}
+
 # --- clean ----------------------------------------------------------------
 foreach ($d in @('gen', 'classes', 'dex')) {
     $p = Join-Path $OUT $d
     if (Test-Path $p) { Remove-Item $p -Recurse -Force }
 }
-foreach ($f in @('res.zip', 'base.apk', 'unsigned.apk', 'opencode-solo.apk', 'opencode-solo.apk.idsig')) {
+foreach ($f in @('res.zip', 'base.apk', 'unsigned.apk', 'aligned.apk', 'opencode-solo.apk', 'opencode-solo.apk.idsig')) {
     $p = Join-Path $OUT $f
     if (Test-Path $p) { Remove-Item $p -Force }
 }
@@ -92,11 +120,15 @@ $aa = @('compile', '--dir', (Join-Path $ROOT 'res'), '-o', (Join-Path $OUT 'res.
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 compile failed' }
 
 Write-Host '==> aapt2 link'
+# NOTE: assets are not passed with -A. aapt2 (at least the 36.0.0 Windows build)
+# stores nested asset paths with BACKSLASHES ("assets/lib\libc.so.6"), which
+# AssetManager.open("lib/libc.so.6") cannot find - the app failed with
+# FileNotFoundException on first run. The packaging step below adds the assets
+# itself with correct forward-slash entry names.
 $al = @('link', '-o', (Join-Path $OUT 'base.apk'), '-I', $AJ,
     '--manifest', (Join-Path $ROOT 'AndroidManifest.xml'),
     '--java', (Join-Path $OUT 'gen'),
     '--min-sdk-version', '24', '--target-sdk-version', '28',
-    '-A', (Join-Path $ROOT 'assets'),
     '--auto-add-overlay', (Join-Path $OUT 'res.zip'))
 & $AAPT2 @al
 if ($LASTEXITCODE -ne 0) { throw 'aapt2 link failed' }
@@ -115,17 +147,55 @@ $d8a = @('--lib', $AJ, '--min-api', '24', '--output', (Join-Path $OUT 'dex')) + 
 & $D8 @d8a
 if ($LASTEXITCODE -ne 0) { throw 'd8 failed' }
 
-Write-Host '==> package'
-Copy-Item (Join-Path $OUT 'base.apk') (Join-Path $OUT 'unsigned.apk') -Force
-& (Join-Path $JAVA 'bin\jar.exe') uf (Join-Path $OUT 'unsigned.apk') -C (Join-Path $OUT 'dex') 'classes.dex'
-if ($LASTEXITCODE -ne 0) { throw 'jar failed' }
+Write-Host '==> package (resources + assets + classes.dex)'
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$unsigned = Join-Path $OUT 'unsigned.apk'
+$aligned = Join-Path $OUT 'aligned.apk'
+foreach ($p in @($unsigned, $aligned)) { if (Test-Path $p) { Remove-Item $p -Force } }
+
+$srcZip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $OUT 'base.apk'))
+$outFs = [System.IO.File]::Create($unsigned)
+try {
+    $dst = New-Object System.IO.Compression.ZipArchive($outFs, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $copy = {
+            param($entry, $name)
+            $ne = $dst.CreateEntry($name, [System.IO.Compression.CompressionLevel]::Optimal)
+            $in = $entry; $out = $ne.Open()
+            try { $in.CopyTo($out) } finally { $out.Dispose() }
+        }
+        foreach ($e in $srcZip.Entries) {
+            $in = $e.Open()
+            try { & $copy $in $e.FullName } finally { $in.Dispose() }
+        }
+        # bundled runtime payload: asset entries must use '/' separators
+        $assetsRoot = Join-Path $ROOT 'assets'
+        Get-ChildItem $assetsRoot -Recurse -File | ForEach-Object {
+            $rel = $_.FullName.Substring($assetsRoot.Length + 1).Replace('\', '/')
+            $in = [System.IO.File]::OpenRead($_.FullName)
+            try { & $copy $in ('assets/' + $rel) } finally { $in.Dispose() }
+        }
+        # classes.dex (replaces the jar step, which would rewrite the zip again)
+        $dex = Join-Path $OUT 'dex\classes.dex'
+        $in = [System.IO.File]::OpenRead($dex)
+        try { & $copy $in 'classes.dex' } finally { $in.Dispose() }
+    } finally { $dst.Dispose() }
+} finally {
+    $srcZip.Dispose()
+    $outFs.Dispose()
+}
+
+Write-Host '==> zipalign'
+& $ZIPALIGN -p -f 4 $unsigned $aligned
+if ($LASTEXITCODE -ne 0) { throw 'zipalign failed' }
 
 Write-Host '==> sign'
 $sg = @('sign', '--ks', $KS, '--ks-key-alias', $KS_ALIAS,
     '--ks-pass', "pass:$KS_PASS", '--key-pass', "pass:$KS_PASS",
     '--v4-signing-enabled', 'true',
     '--out', (Join-Path $OUT 'opencode-solo.apk'),
-    (Join-Path $OUT 'unsigned.apk'))
+    $aligned)
 & $APKSIGNER @sg
 if ($LASTEXITCODE -ne 0) { throw 'apksigner sign failed' }
 

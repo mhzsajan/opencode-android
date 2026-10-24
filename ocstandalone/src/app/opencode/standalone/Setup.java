@@ -70,10 +70,17 @@ public class Setup extends Activity {
 
     private static Item[] catalogue() {
         java.util.List<Item> out = new java.util.ArrayList<Item>();
-        out.add(new Item("Files & folders",
-                "Read and edit anything in your phone's storage",
-                "android.permission.READ_EXTERNAL_STORAGE",
-                "android.permission.WRITE_EXTERNAL_STORAGE"));
+        // READ/WRITE_EXTERNAL_STORAGE are declared with maxSdkVersion="28" in the
+        // manifest, so on Android 10+ requestPermissions() returns "denied"
+        // without showing any dialog -- the Allow button looked dead (reported on
+        // Android 16). All-files access, which has its own row below, is the
+        // supported path on those versions.
+        if (Build.VERSION.SDK_INT <= 28) {
+            out.add(new Item("Files & folders",
+                    "Read and edit anything in your phone's storage",
+                    "android.permission.READ_EXTERNAL_STORAGE",
+                    "android.permission.WRITE_EXTERNAL_STORAGE"));
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             out.add(new Item("Photos & videos",
                     "Let the agent work with your photo and video libraries",
