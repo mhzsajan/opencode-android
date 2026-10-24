@@ -57,6 +57,7 @@ public class ServerService extends Service {
     private volatile Process proc;
     private Thread watcher;
     private volatile boolean stopping = false;
+    private AuthProxy proxy;
 
     public static boolean isRunning() {
         return running;
@@ -83,6 +84,9 @@ public class ServerService extends Service {
         running = true;
         stopping = false;
         goForeground("starting");
+        // The WebView talks to the proxy, which adds opencode v2's Basic auth header.
+        proxy = new AuthProxy(ensurePassword());
+        proxy.start();
         watcher = new Thread(new Runnable() {
             public void run() {
                 supervise();
@@ -104,6 +108,10 @@ public class ServerService extends Service {
     @Override
     public void onDestroy() {
         stopping = true;
+        if (proxy != null) {
+            proxy.stop();
+            proxy = null;
+        }
         killTree();
         running = false;
         super.onDestroy();

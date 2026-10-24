@@ -33,7 +33,9 @@ import java.net.URL;
 public class MainActivity extends Activity {
 
     private static final String TAG = "ocstandalone";
-    private static final String URL = "http://127.0.0.1:4096/";
+    // The WebView talks to the in-app auth proxy (AuthProxy), which forwards to
+    // the bundled server on 4096 and adds opencode v2's Basic auth header.
+    private static final String URL = "http://127.0.0.1:" + AuthProxy.PORT + "/";
     private static final int MAX_RETRIES = 180;
     private static final long SPAWN_THROTTLE = 5000;
     private static final int REQ_FILE = 101;
@@ -248,15 +250,6 @@ public class MainActivity extends Activity {
         retries = 0;
         bar.setVisibility(View.VISIBLE);
         web.setVisibility(View.VISIBLE);
-        // opencode v2 puts its API behind HTTP Basic (user "opencode", password =
-        // the server password). Pre-seed WebView's HTTP auth cache so fetch/XHR/
-        // EventSource requests to /api/* are answered without a dialog.
-        String pw = ServerService.password(this);
-        if (pw != null) {
-            for (String host : new String[] { "127.0.0.1", "localhost" }) {
-                web.setHttpAuthUsernamePassword(host, "Secure Area", ServerService.AUTH_USER, pw);
-            }
-        }
         Log.d(TAG, "load " + URL);
         web.loadUrl(URL);
     }
