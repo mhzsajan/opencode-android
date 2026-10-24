@@ -29,10 +29,35 @@ public class ServerService extends Service {
     private static final String CHANNEL = "opencode_server";
     private static final int NOTIF_ID = 41;
 
+    /** opencode v2 authenticates its API with HTTP Basic: user + server password. */
+    public static final String PREFS = "oc_server";
+    public static final String PREF_PASSWORD = "password";
+    public static final String AUTH_USER = "opencode";
+
+    public static String password(Context c) {
+        if (c == null) return null;
+        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(PREF_PASSWORD, null);
+    }
+
+    private String ensurePassword() {
+        android.content.SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String pw = sp.getString(PREF_PASSWORD, null);
+        if (pw == null || pw.length() < 16) {
+            byte[] b = new byte[24];
+            new java.security.SecureRandom().nextBytes(b);
+            StringBuilder sb = new StringBuilder();
+            for (byte x : b) sb.append(String.format("%02x", x));
+            pw = sb.toString();
+            sp.edit().putString(PREF_PASSWORD, pw).apply();
+        }
+        return pw;
+    }
+
     private static volatile boolean running = false;
     private volatile Process proc;
     private Thread watcher;
     private volatile boolean stopping = false;
+    private AuthProxy proxy;
 
     public static boolean isRunning() {
         return running;
@@ -59,6 +84,9 @@ public class ServerService extends Service {
         running = true;
         stopping = false;
         goForeground("starting");
+        // The WebView talks to the proxy, which adds opencode v2's Basic auth header.
+        proxy = new AuthProxy(ensurePassword());
+        proxy.start();
         watcher = new Thread(new Runnable() {
             public void run() {
                 supervise();
@@ -80,6 +108,10 @@ public class ServerService extends Service {
     @Override
     public void onDestroy() {
         stopping = true;
+        if (proxy != null) {
+            proxy.stop();
+            proxy = null;
+        }
         killTree();
         running = false;
         super.onDestroy();
@@ -252,15 +284,20 @@ public class ServerService extends Service {
         // above); without it glibc cannot resolve anything.
         writeResolvConf();
 
+        // opencode v2's server requires HTTP Basic auth on /api/*. Give it a
+        // fixed per-install password (rather than the random one it prints at
+        // startup) so the WebView can answer the auth challenge; MainActivity
+        // supplies it in onReceivedHttpAuthRequest.
+        String password = ensurePassword();
+
         ProcessBuilder pb = new ProcessBuilder(
                 ld.getAbsolutePath(),
                 bin.getAbsolutePath(),
                 "serve",
                 "--port", String.valueOf(PORT),
                 "--hostname", "127.0.0.1",
-                "--pure",
                 "--print-logs",
-                "--log-level", "INFO");
+                "--log-level", "info");
         pb.directory(project);
         Map<String, String> env = pb.environment();
         env.clear();
@@ -272,6 +309,7 @@ public class ServerService extends Service {
         env.put("XDG_CONFIG_HOME", new File(home, ".config").getAbsolutePath());
         env.put("XDG_CACHE_HOME", new File(home, ".cache").getAbsolutePath());
         env.put("OPENCODE_DISABLE_AUTOUPDATE", "1");
+        env.put("OPENCODE_SERVER_PASSWORD", password);
 
         try {
             proc = pb.start();

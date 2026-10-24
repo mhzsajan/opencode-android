@@ -33,7 +33,9 @@ import java.net.URL;
 public class MainActivity extends Activity {
 
     private static final String TAG = "ocstandalone";
-    private static final String URL = "http://127.0.0.1:4096/";
+    // The WebView talks to the in-app auth proxy (AuthProxy), which forwards to
+    // the bundled server on 4096 and adds opencode v2's Basic auth header.
+    private static final String URL = "http://127.0.0.1:" + AuthProxy.PORT + "/";
     private static final int MAX_RETRIES = 180;
     private static final long SPAWN_THROTTLE = 5000;
     private static final int REQ_FILE = 101;
@@ -287,6 +289,26 @@ public class MainActivity extends Activity {
             if (req != null && req.isForMainFrame()) {
                 Log.d(TAG, "http error " + err.getStatusCode() + " url=" + req.getUrl());
                 retry();
+            }
+        }
+
+        /**
+         * opencode v2 serves its web UI without auth but its /api/* endpoints
+         * answer 401 with a Basic challenge (user "opencode", password = the
+         * server password). The WebView is the API client, so answer the
+         * challenge with the password ServerService generated and stored.
+         */
+        @Override
+        public void onReceivedHttpAuthRequest(WebView view, android.webkit.HttpAuthHandler handler,
+                                              String host, String realm) {
+            String pw = ServerService.password(MainActivity.this);
+            boolean local = "127.0.0.1".equals(host) || "localhost".equals(host) || "::1".equals(host);
+            if (local && pw != null) {
+                Log.d(TAG, "http auth challenge host=" + host + " realm=" + realm + " -> proceeding");
+                handler.proceed(ServerService.AUTH_USER, pw);
+            } else {
+                Log.d(TAG, "http auth challenge host=" + host + " realm=" + realm + " -> cancel");
+                handler.cancel();
             }
         }
     }
