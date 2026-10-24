@@ -1,5 +1,8 @@
 # opencode on Android
 
+Latest release: **[v1.4](https://github.com/mhzsajan/opencode-android/releases/tag/v1.4)** —
+standalone app works on-device (DNS fix), plus the small Termux variant.
+
 Three Android apps that give [opencode](https://github.com/anomalyco/opencode) a phone-native UI.
 All of them are thin WebView shells around `opencode serve`; they differ in where the server
 comes from.
