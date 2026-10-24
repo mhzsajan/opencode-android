@@ -248,6 +248,15 @@ public class MainActivity extends Activity {
         retries = 0;
         bar.setVisibility(View.VISIBLE);
         web.setVisibility(View.VISIBLE);
+        // opencode v2 puts its API behind HTTP Basic (user "opencode", password =
+        // the server password). Pre-seed WebView's HTTP auth cache so fetch/XHR/
+        // EventSource requests to /api/* are answered without a dialog.
+        String pw = ServerService.password(this);
+        if (pw != null) {
+            for (String host : new String[] { "127.0.0.1", "localhost" }) {
+                web.setHttpAuthUsernamePassword(host, "Secure Area", ServerService.AUTH_USER, pw);
+            }
+        }
         Log.d(TAG, "load " + URL);
         web.loadUrl(URL);
     }
@@ -287,6 +296,26 @@ public class MainActivity extends Activity {
             if (req != null && req.isForMainFrame()) {
                 Log.d(TAG, "http error " + err.getStatusCode() + " url=" + req.getUrl());
                 retry();
+            }
+        }
+
+        /**
+         * opencode v2 serves its web UI without auth but its /api/* endpoints
+         * answer 401 with a Basic challenge (user "opencode", password = the
+         * server password). The WebView is the API client, so answer the
+         * challenge with the password ServerService generated and stored.
+         */
+        @Override
+        public void onReceivedHttpAuthRequest(WebView view, android.webkit.HttpAuthHandler handler,
+                                              String host, String realm) {
+            String pw = ServerService.password(MainActivity.this);
+            boolean local = "127.0.0.1".equals(host) || "localhost".equals(host) || "::1".equals(host);
+            if (local && pw != null) {
+                Log.d(TAG, "http auth challenge host=" + host + " realm=" + realm + " -> proceeding");
+                handler.proceed(ServerService.AUTH_USER, pw);
+            } else {
+                Log.d(TAG, "http auth challenge host=" + host + " realm=" + realm + " -> cancel");
+                handler.cancel();
             }
         }
     }

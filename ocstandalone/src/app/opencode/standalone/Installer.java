@@ -9,7 +9,7 @@ import java.io.InputStream;
 
 public final class Installer {
 
-    public static final String STAMP = "payload-v2";
+    public static final String STAMP = "payload-v3";
     private static final String BIN = "opencode-bin";
     private static final String[] LIBS = {
             "lib/ld-linux-aarch64.so.1",
