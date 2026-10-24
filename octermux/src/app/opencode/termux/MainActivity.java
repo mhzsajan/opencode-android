@@ -53,7 +53,10 @@ public class MainActivity extends Activity {
     private static final String SERVER_SCRIPT = HOME + "/.shortcuts/oc-server";
     private static final String PROJECT = HOME + "/myproject";
     private static final String URL = "http://127.0.0.1:4096/";
-    private static final int MAX_RETRIES = 40;
+    // 180 x 1 s: a cold Termux launch can take a while on a busy phone, and
+    // giving up early is exactly what made the first standalone build look
+    // broken. The status line shows progress while this runs.
+    private static final int MAX_RETRIES = 180;
     private static final long SPAWN_THROTTLE = 5000;
 
     private static final String PERM = "com.termux.permission.RUN_COMMAND";
@@ -65,6 +68,8 @@ public class MainActivity extends Activity {
     private ProgressBar bar;
     private TextView status;
     private int retries = 0;
+    private boolean waiting = false;
+    private boolean loadedOnce = false;
     private long lastSpawn = 0;
     private long lastBack = 0;
     private ValueCallback<Uri[]> filePath;
@@ -128,9 +133,65 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * Ask Termux to start the server (if it is not already up) and then wait
+     * for port 4096 asynchronously.
+     *
+     * ping() must never run on the main thread: HttpURLConnection throws
+     * NetworkOnMainThreadException, the old code swallowed it and concluded
+     * "server not ready" forever, so the WebView never loaded. That was the
+     * blank-UI bug in ocstandalone; this app had the same pattern.
+     */
     private void start() {
-        if (!ping()) ensureServer();
-        load();
+        ensureServer();
+        loadWhenReady();
+    }
+
+    private void loadWhenReady() {
+        if (waiting) return;
+        waiting = true;
+        new Thread(new Runnable() {
+            public void run() {
+                final boolean ok = ping();
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        if (ok) {
+                            waiting = false;
+                            retries = 0;
+                            bar.setVisibility(View.GONE);
+                            if (!loadedOnce) load();
+                            return;
+                        }
+                        if (retries >= MAX_RETRIES) {
+                            waiting = false;
+                            Log.d(TAG, "loadWhenReady: giving up after " + retries + " attempts");
+                            status.setText("opencode is not answering on port 4096.\n"
+                                    + "Start Termux once, then reopen this app.");
+                            status.setVisibility(View.VISIBLE);
+                            return;
+                        }
+                        retries++;
+                        Log.d(TAG, "loadWhenReady attempt " + retries + " (ping failed)");
+                        status.setText("Starting opencode in Termux"
+                                + (retries > 1 ? " (attempt " + retries + ")" : "")
+                                + "...");
+                        status.setVisibility(View.VISIBLE);
+                        bar.setVisibility(View.VISIBLE);
+                        web.postDelayed(new Runnable() {
+                            public void run() {
+                                if (isFinishing()) {
+                                    waiting = false;
+                                    return;
+                                }
+                                ensureServer();
+                                waiting = false;
+                                loadWhenReady();
+                            }
+                        }, 1000);
+                    }
+                });
+            }
+        }, "octermux-ping").start();
     }
 
     @Override
@@ -180,6 +241,7 @@ public class MainActivity extends Activity {
         @Override
         public void onPageFinished(WebView view, String url) {
             Log.d(TAG, "page finished: " + url);
+            if (url != null && url.startsWith("http")) loadedOnce = true;
             bar.setVisibility(View.GONE);
             status.setVisibility(View.GONE);
         }
@@ -189,6 +251,7 @@ public class MainActivity extends Activity {
             if (req != null && req.isForMainFrame()) {
                 Log.d(TAG, "main frame error " + err.getErrorCode() + ": " + err.getDescription()
                         + " url=" + req.getUrl());
+                loadedOnce = false;
                 retry();
             }
         }
@@ -303,20 +366,8 @@ public class MainActivity extends Activity {
     }
 
     private void retry() {
-        if (retries >= MAX_RETRIES) return;
-        retries++;
-        bar.setVisibility(View.VISIBLE);
-        web.postDelayed(new Runnable() {
-            public void run() {
-                if (ping()) {
-                    retries = 0;
-                    web.loadUrl(URL);
-                } else {
-                    ensureServer();
-                    retry();
-                }
-            }
-        }, 1000);
+        // async, main-thread-safe wait; onPageFinished clears the "loaded" flag's effect
+        loadWhenReady();
     }
 
     private void load() {
@@ -385,7 +436,12 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (web == null) return;
-        if (!ping()) start();
+        // Keep an already-rendered page. Otherwise re-arm the async wait: no
+        // synchronous ping here, it would throw NetworkOnMainThreadException.
+        if (!loadedOnce) {
+            retries = 0;
+            start();
+        }
     }
 
     @Override
