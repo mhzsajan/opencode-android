@@ -1,262 +1,152 @@
 # opencode Android — session handoff
 
-Written 2026-10-02 ~10:20. Read this first after any disconnect.
+Updated **2026-10-24** (previous version: 2026-10-02/03). Read this first after any disconnect.
 
 ---
 
 ## 1. TL;DR
 
-Two Android apps exist and **both work now**. The Termux-backed one (oclaunch) always worked.
-The standalone one's blank-UI bug was **fixed on 2026-10-03** — root cause: `ping()` ran on
-the main thread and always threw `NetworkOnMainThreadException`, so `load()` was never
-reached; see section 4. Remaining known gap: the standalone app needs a provider API key
-configured inside it before chat works (bottom of section 4).
+| | State |
+|---|---|
+| `octermux` (Termux-backed, ~30 KB) | **Builds clean. Ping bug fixed 2026-10-24** (it had the same main-thread `HttpURLConnection` bug that made `ocstandalone` look blank). Device test pending. |
+| `ocstandalone` (self-contained, ~62 MB) | **Builds clean** on Windows (v1.4). Upstream networking in the app UID is still unresolved — root cause narrowed down statically, see `docs/STANDALONE-NETWORK.md`. |
+| `oclaunch` | Legacy, superseded by `octermux`. Unchanged. |
 
-**Device state (2026-10-03):** only `app.opencode.standalone` is installed. `app.opencode.launcher`
-and the official `cc.agentlabs.opencode` app were uninstalled at the user's request (too many
-identical icons caused confusion) — both remain in this repo and `build.sh` can rebuild them.
+The phone was **in use for another project** during the 2026-10-24 session, so the build work was
+done offline (no installs, launches or taps after the user asked to stop). Everything below is
+either verified by static APK checks or explicitly marked as device-pending.
 
-**Release:** v1.0 published at https://github.com/mhzsajan/opencode-android/releases/tag/v1.0
-with `opencode-android-v1.0.apk` attached (see section 6).
+## 2. Device state (Samsung SM-S908E, Android 16, arm64)
 
-**Pending until the phone is reconnected (user took it, 2026-10-03 afternoon):**
-1. `adb install -r C:\Users\o0o\Documents\opencode-android\ocstandalone\build\opencode-solo.apk`
-   (the port-adoption fix, already built on the PC). Verify: no more
-   `server exited rc=1` loop while Termux serves 4096; log shows `adopting`.
-2. After Termux is uninstalled: reopen the app and verify the handover - log should show
-   `external server gone, spawning our own` and the UI must still load.
-3. If both verify, consider cutting v1.1 (bump `android:versionCode`/`versionName` in
-   `ocstandalone/AndroidManifest.xml`) and attaching the APK to a new GitHub release.
+- **Termux 0.118.0 installed fresh on 2026-10-24 09:24.** Its opencode setup (CLI in
+  `~/.opencode/bin`, `auth.json`, `myproject`) is *not* confirmed present after the reinstall.
+  `octermux` cannot work until that is restored (see section 5).
+- `app.opencode.standalone` v1.4 was installed on 2026-10-24 ~18:11 during this session, signed
+  with a **new** keystore (see section 6). First-run setup was on screen when device work was
+  paused; the app was not exercised end to end.
+- `app.opencode.launcher` and `app.opencode.termux` are **not** installed.
+- Old notes/handoff material lives on the phone in `/sdcard/opencode/` (also copied into the
+  DSH workspace at `phone-notes/opencode/`).
 
----
+## 3. Build state (Windows, offline)
 
-## 2. What is installed on this phone
+Built and verified with `build-tools 36.0.0` + JDK 21 against `platforms/android-37.0`:
 
-| Package | Version | State |
-|---|---|---|
-| `app.opencode.launcher` (oclaunch) | 3.2 | **Working.** Termux-backed, ~26 KB APK |
-| `app.opencode.standalone` (ocstandalone) | 1.0 | Server works, **UI blank** (open bug) |
-| `cc.agentlabs.opencode` | — | Pre-existing, unrelated, never touched |
+| Artifact | Version | Size | SHA-256 |
+|---|---|---|---|
+| `ocstandalone/build/opencode-solo.apk` | 1.4 (versionCode 5) | 62 125 777 | `0F6F6EFEF62EF025D6B83B72686BFA2957C5A754B686D8402F1D3A0E39DA84FB` |
+| `octermux/build/opencode-termux.apk` | 1.1 (versionCode 2) | 30 003 | (see `Get-FileHash` after a rebuild; it changes with the timestamp) |
 
-Both use the same launcher icon, so pick carefully on the home screen. `oclaunch` shows as
-"opencode", `ocstandalone` as "opencode solo".
+Checks done offline: `apksigner verify` passes, `aapt2 dump badging` shows the intended
+package/versionSdk, APK zip contains `classes.dex` and (for standalone) the full
+`assets/opencode-bin` + `assets/lib/*` payload. `octermux`'s dex was checked to contain the new
+`loadWhenReady`/`octermux-ping` symbols.
 
----
+Reproduce:
 
-## 3. Verified working
+```powershell
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:JAVA_HOME    = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot'
+$env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
 
-- **The standalone server genuinely needs no Termux.** Proof from `ps`:
-  ```
-  u0_a852  3383  2454  ld-linux-aarch64.so.1 /data/user/0/app.opencode.standalone/files/opencode-bin \
-                 serve --port 4096 --hostname 127.0.0.1 --pure --print-logs --log-level INFO
-  ```
-  It runs as the app's own UID (`u0_a852`), not Termux's (`u0_a845`). Termux was force-stopped
-  and had zero `oc-server` sessions at the time of this test.
-- Server answers `http://127.0.0.1:4096/` with **200 in 41 ms**, serving the real UI
-  (`<title>OpenCode</title>`, `id="root"`).
-- JS bundle `/assets/index-jLGkMci9.js` → 200, 2 740 171 bytes, 54 ms.
-- CSS `/assets/index-DLiUNAg_.css` → 200, 482 489 bytes.
-- Foreground service is healthy: `isForeground=true foregroundId=41 types=0x40000000`
-  (`0x40000000` = `SPECIAL_USE`), with an ongoing notification on channel `opencode_server`.
-- First-run extraction of the 181 MB payload completes and the binary is executable.
+# octermux (no payload needed)
+powershell -ExecutionPolicy Bypass -File .\octermux\build.ps1
 
----
-
-## 4. Standalone UI blank bug — FIXED 2026-10-03
-
-**Original symptom:** dark screen, spinner forever; `onPageFinished` never fired.
-
-**Root cause (confirmed by instrumentation):** `ping()` used `HttpURLConnection` **on the
-main thread**, so every attempt threw `android.os.NetworkOnMainThreadException`. The old
-`catch (Throwable) { return false; }` swallowed it silently, so `loadWhenReady()` retried
-forever and `load()` was never reached — the WebView (started `GONE`, only shown in
-`load()`) never appeared. Exactly the observed symptom.
-
-**The previous session's hypothesis was wrong on two counts:**
-- It was not "unconfirmed" — it was ping failing, but for a non-network reason.
-- The network security config is **fine**. No `main frame error` was ever logged after
-  the fix, and cleartext was never exercised before it. Do **not** remove
-  `res/xml/network_security_config.xml`: at `targetSdk 28` cleartext defaults to *denied*,
-  and that config is what whitelists `127.0.0.1`/`localhost`. (The old advice "targetSdk 28
-  permits cleartext by default" was backwards.)
-
-**Fix in `MainActivity.java` (all committed):**
-- `ping()` runs on a background thread (`oc-ping`); results marshalled via `runOnUiThread`.
-- `waiting` flag prevents duplicate retry chains (old code ran two: beginServer + onResume,
-  which doubled the retry counter).
-- `loadedOnce` tracks whether the real page rendered, so `onResume` no longer pings
-  synchronously; it resets `retries`, then `ensureServer()` + `loadWhenReady()`.
-- WebView now starts `VISIBLE` (was `View.GONE`), so a future failure surfaces a real
-  Chromium error page instead of a featureless dark screen.
-- Diagnostic `Log.d(TAG, ...)` lines in ping/loadWhenReady/load/onPageFinished/
-  onReceivedError/onReceivedHttpError. Tag: `ocstandalone`
-  (`adb logcat -s ocstandalone:*`).
-
-**Verified 2026-10-03:** cold start → `ping ok code=200` ~2 s after spawn →
-`load http://127.0.0.1:4096/` → `page finished` → full UI renders (screenshot confirmed).
-
-**Known gap (not a bug):** the standalone server starts with a **fresh, empty `HOME`**
-(`filesDir/home`), so it has **no `auth.json` and no API key**, and the UI shows
-"Nothing here yet". Chat will not work until a provider key is configured inside the app:
-either copy an `auth.json` into `filesDir/home/.local/share/opencode/`, or add a
-"paste your key" screen.
-
-**Second fix, same day: port-conflict adoption.** While the Termux opencode CLI served
-port 4096, the app's own spawn could never bind → `server exited rc=1, restarting` in an
-endless loop (EADDRINUSE). `ServerService.supervise()` now pings the port first and
-**adopts** an already-serving instance (recheck every 5 s; if the external server
-disappears - e.g. Termux uninstalled - it spawns the bundled one). Log signature:
-`port 4096 already served externally, adopting`.
-
----
-
-## 5. Repo
-
-`~/build` is a git repo. One commit: `7d3c3b2`.
-
-```
-~/build/
-  .gitignore          excludes payload, keystore, APKs, android.jar
-  README.md           architecture, build, install, debugging
-  stage-assets.sh     re-fetches the 177 MB payload + glibc (not committable)
-  oclaunch/           Termux-backed app + build.sh
-  ocstandalone/       standalone app + build.sh
+# ocstandalone (payload must be staged first)
+.\ocstandalone\stage-assets.ps1 -FromApk _incoming\opencode-android-v1.0.apk
+powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1
 ```
 
-**Nothing large or secret is committed.** Verified: largest tracked file is 14 KB, no
-keystore, no APK, no `opencode-bin`, no `android.jar`. The keystore password was removed from
-both `build.sh` files and is now required via `$KS_ALIAS` / `$KS_PASS`.
+## 4. What changed on 2026-10-24
 
-### Rebuilding
+1. **`octermux` ping bug fixed.** `start()`/`onResume()`/`retry()` called `ping()`
+   (`HttpURLConnection`) on the main thread. It throws `NetworkOnMainThreadException`, the
+   exception was swallowed, and the app concluded "server not ready" forever — the exact same
+   class of bug as the old `ocstandalone` blank UI. `ping()` now runs on a background thread
+   (`octermux-ping`), a `waiting` flag prevents duplicate retry chains, the retry budget is 180
+   attempts (3 min — cold Termux starts are slow), and the status line shows the attempt number.
+2. **`octermux/build.ps1` added** — Windows build of the small app; no gradle, same
+   aapt2/javac/d8/apksigner flow as `ocstandalone`. Version bumped to 1.1 / code 2.
+3. **`docs/STANDALONE-NETWORK.md` written** (it was referenced by the code but did not exist).
+   It records the device measurements from 2026-10-05/06, the new static analysis of the payload,
+   and the candidate fix.
+4. **README rewritten** for three apps, Windows builds, keystore rules, Termux setup for
+   `octermux`.
 
-```sh
-cd ~/build/ocstandalone
-KS_ALIAS=opencode KS_PASS=opencode ./build.sh     # ~2 min, produces a 60 MB APK
+Static-analysis findings worth keeping (details in `docs/STANDALONE-NETWORK.md`):
+
+- the bundled `libc.so.6` has Termux's resolver path compiled in
+  (`/data/data/com.termux/files/usr/glibc/etc/resolv.conf`, offset `0x16D4B0`); it does not exist
+  for the standalone package;
+- the `opencode-bin` binary contains **no** `RESOLV_CONF`, `DNS_RESULT_ORDER` or
+  `DNS_AUTO_FALLBACK` strings — the `NET_ENV` entries in both apps are **no-ops**;
+- consequently v1.3's "resolver override" theory and v1.4's "IPv6-first" theory cannot be right;
+  the child simply has no usable resolver configuration. Test the candidate fix before trusting
+  it.
+
+## 5. Next steps, in order
+
+1. **Standalone DNS experiment** — `docs/STANDALONE-NETWORK.md` section 4. Needs a provider key
+   only for the final chat check; steps 2-3 (logcat error line, app-UID resolution probe) do not.
+2. **Restore Termux for `octermux`** (if that is the path to ship): install the opencode CLI in
+   Termux, write `~/.shortcuts/oc-server`, set `allow-external-apps=true`, then install and open
+   the app and grant RUN_COMMAND.
+3. **Provider key.** Neither app has one now. `ocstandalone` v1.3+ has a setup screen that writes
+   `filesDir/home/.local/share/opencode/auth.json`; `octermux` uses Termux's own
+   `~/.local/share/opencode/auth.json`. Chat stays broken without it regardless of networking.
+4. **Version bump + release** once a device test passes. v1.0 release on GitHub is signed with
+   the *old* lost keystore, so a new release will not install over it — uninstall first.
+
+## 6. Keystore (new, 2026-10-24)
+
+The old backup (`C:\Users\o0o\Documents\opencode-backup\...`) no longer exists on this PC, so a
+new keystore was generated:
+
+```
+ocstandalone\build\launcher.keystore   (gitignored)
+alias    : opencode
+password : opencode
+DN       : CN=opencode-android, O=mhzsajan, C=NP
 ```
 
-`build.sh` prints instructions if `android.jar` (`~/build/sdk/android.jar`, 27 MB) or the
-payload (`assets/`) is missing. `stage-assets.sh` restores the payload.
-
-### Install (Shizuku must be running)
-
-```sh
-# rish takes commands on STDIN ONLY -- argv form silently does nothing
-cat <<'EOF' | ~/bin/rish
-cp /storage/emulated/0/Download/opencode-solo.apk /data/local/tmp/solo.apk
-chmod 644 /data/local/tmp/solo.apk
-pm install -r /data/local/tmp/solo.apk
-rm -f /data/local/tmp/solo.apk
-EOF
-```
-
-`pm install` cannot read FUSE paths — `system_server` has no access to
-`/storage/emulated/0`, hence the copy to `/data/local/tmp` first.
-
----
-
-## 6. GitHub push — DONE (2026-10-03)
-
-Repo: **https://github.com/mhzsajan/opencode-android** (private, account `mhzsajan`).
-
-- Pushed from the Windows PC, where `gh` CLI was already authenticated. Termux has no
-  GitHub credentials and does not need them.
-- **Sync topology (updated 2026-10-03 pm): the PC clone is now the canonical working
-  copy.** It lives at `C:\Users\o0o\Documents\opencode-android` (remotes: `origin` =
-  GitHub, `phone` = the Termux repo over the adb/ssh bridge, kept only for reference).
-  Develop on the PC, commit there, `git push origin master` directly. The phone repo is
-  frozen at whatever was last relayed (Termux may be uninstalled by the user).
-- **Windows build pipeline (replaces phone builds):**
-  - `ocstandalone/build.ps1` - full port of build.sh. Needs `ANDROID_HOME`
-    (`G:\dev\android-sdk`, build-tools 36/37) and `JAVA_HOME` (Eclipse Adoptium JDK 21;
-    falls back to Android Studio's JBR).
-  - `ocstandalone/stage-assets.ps1 -FromApk <apk>` - restores the 181 MB payload
-    (opencode-bin + glibc lib) from any built APK or release asset (they live inside it).
-  - Keystore: `ocstandalone\build\launcher.keystore` (gitignored). Backup copy:
-    `C:\Users\o0o\Documents\opencode-backup\keystores\standalone-launcher.keystore` -
-    **without it, future builds cannot update the installed app** (signature mismatch).
-  - The backup folder also holds the old Termux opencode CLI data
-    (`opencode-cli-data\`: auth.json key + session db).
-  - Build: `$env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'` then
-    `powershell -ExecutionPolicy Bypass -File ocstandalone\build.ps1`
-  - Proven 2026-10-03: the PC-built APK installed over v1.0 with `adb install -r`
-    (same signature) and ran fine.
-
-**Release v1.0 (2026-10-03):** tag `v1.0`, asset `opencode-android-v1.0.apk` (arm64, ~60 MB,
-SHA-256 `66e94cff1b24b426c56dabb1a80356b707f9f2592cea546f99f5f5376ec5a6eb`). Published from
-the PC with:
-```sh
-gh release create v1.0 <path-to-apk> --repo mhzsajan/opencode-android --notes-file <notes.md>
-```
-For the next release: bump versionCode/versionName in `build.sh`, rebuild, then repeat with
-`v1.1`.
-
----
+**Back this file up outside the repo.** Without it, upcoming builds cannot update an installed
+copy; Android refuses a signature change. Losing it means uninstall/reinstall.
 
 ## 7. Hard-won environment facts (do not relearn these)
 
-- **`rish` on current Shizuku only executes commands piped through stdin.**
-  `rish "echo hi"` exits 0, prints nothing, and is indistinguishable from Shizuku being
-  stopped. Use `cmd | rish`.
-- **`pm install` cannot read FUSE paths.** `system_server` cannot read
-  `/storage/emulated/0`; shell can. Copy via shell to `/data/local/tmp` first.
-- **`aapt2` compresses assets**, so `AssetManager.openFd()` throws
-  `FileNotFoundException: ... probably compressed`. Use `am.open()` and count bytes.
-  This is also why the APK is 60 MB rather than 181 MB.
-- **Android 10+ W^X blocks `execve()` of `app_data_file` for apps targeting API 29+.**
-  Symptom: `java.io.IOException: error=13, Permission denied` from `UNIXProcess.forkAndExec`.
-  Fix: `targetSdk 28`, which is exactly why Termux is `targetSdk 28`. The `/data` mount is
-  not `noexec`, so it is SELinux policy, not the filesystem.
-- **`set -o pipefail` + `| head -1`** makes a script die with SIGPIPE (exit 141). Capture into
-  a variable instead.
-- **The manifest has no `<uses-sdk>` element**, so `aapt2 link` must be passed
-  `--min-sdk-version` / `--target-sdk-version` explicitly, or the install fails with
-  `INSTALL_FAILED_DEPRECATED_SDK_VERSION ... found 0`.
-- **`pkill -f` matched its own command line** and killed my shell. Use `pgrep -x <name>`
-  (matches process name, cannot self-match) or explicit PIDs.
-- Screenshots for debugging: `screencap -p /storage/emulated/0/Download/x.png` via rish, then
-  read from `~/storage/shared/Download/x.png`. Screen is **1080x2316**; the reader downscales
-  to 945 wide, so multiply observed coordinates by ~1.143 to get real tap coordinates.
-- `df` and `ps` in Termux only see Termux's own processes. Use rish for device-wide views.
-
----
+- **`targetSdk 28` is required** for `ocstandalone`: Android 10+ W^X denies `execve()` of
+  `app_data_file` for apps targeting API 29+, and the bundled glibc loader must be executed from
+  the app's files dir. Termux is targetSdk 28 for the same reason.
+- `aapt2` compresses assets, so `AssetManager.openFd()` throws "probably compressed"; use
+  `open()` and stream. This is why the 181 MB payload yields a ~62 MB APK.
+- `ocstandalone`'s manifest has no `<uses-sdk>`, so `aapt2 link` must pass
+  `--min-sdk-version`/`--target-sdk-version` explicitly or the install fails with
+  `INSTALL_FAILED_DEPRECATED_SDK_VERSION`.
+- The cleartext config (`res/xml/network_security_config.xml`) is required: at targetSdk 28
+  cleartext defaults to denied and `127.0.0.1` must be whitelisted. Do not remove it.
+- `NetworkOnMainThreadException` on any `HttpURLConnection` in a UI path — swallow it in a
+  `catch (Throwable)` and you get an infinite "not ready" loop with no log. This bit both apps.
+- `adb install` can read the APK directly; on-device installs (`pm install`) cannot read FUSE
+  paths (`/storage/emulated/0`) because `system_server` has no access — copy to
+  `/data/local/tmp` first.
+- Screenshots over adb: `adb shell screencap -p /sdcard/x.png` then `adb pull` (piping
+  `adb exec-out screencap` through PowerShell > redirection corrupts the PNG).
+- `adb shell pm list packages` and other `pm` calls can throw
+  `SecurityException: Shell does not have permission to access user 150` on this phone (a second
+  user profile exists); it is a warning, primary user 0 works.
+- Git over HTTPS from this sandbox fails with
+  `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`. Workaround used:
+  `git -c http.sslBackend=openssl -c credential.helper= clone https://<gh-token>@github.com/...`
+  (`gh auth token`). Local clones via helper processes also fail
+  (`sh.exe: couldn't create signal pipe`), so copy the working tree with `Copy-Item` instead of
+  `git clone` when moving it between folders.
 
 ## 8. Security
 
-- The OpenCode API key was printed into a session log while reading
-  `~/.local/share/opencode/auth.json` (`oc_sk_caa4664e…`). **Rotate it** if that transcript
-  is shared or stored anywhere.
-- The keystore password is `opencode`, alias `opencode`. Both keystores are gitignored; the
-  password was stripped from `build.sh`.
-- Notification *access* (`BIND_NOTIFICATION_LISTENER_SERVICE`) is **not** needed and should
-  not be granted to either app. Only Google Assistant, Smart Mirroring, and the Samsung
-  launcher have it. The apps use `POST_NOTIFICATIONS` (auto-prompted at `targetSdk 28`) for
-  their own foreground-service notification.
-
----
-
-## 9. Chat "not working" in oclaunch — root cause, unrelated to the app
-
-The `+` new-tab button was never broken; it was verified working by tapping it. The stall is
-upstream:
-
-- `big-pickle` ran 102 s and ended `MessageAbortedError` with **0 tokens and no parts**.
-- Recurring `AI_APICallError: Upstream request failed: Insufficient account funds` on
-  `gpt-5.4-nano` (the model opencode uses to generate session titles — which is why every
-  session is literally named "New session").
-- The free `mimo-v2.6-flash-free` fallback does respond.
-
-So: an account/billing problem, not an app problem.
-
----
-
-## 10. Other open items
-
-- Sessions in oclaunch are rooted in `~/.opencode` ("No Git"), not `~/myproject`, even though
-  the server's cwd is `~/myproject`. The web UI defaults the session directory to the global
-  project. Not yet addressed.
-- The standalone app has **no bash and no git** (Termux's are bionic binaries and cannot run
-  under the glibc loader). opencode's native file tools do work. If bash/git are wanted later,
-  drop glibc-built binaries into `assets/` — no architecture change needed.
-- Mobile UI work landed in v3.2 of oclaunch: `WebChromeClient` (file picker, mic, console
-  logging, popups), back dismisses keyboard before navigating, double-tap to exit, external
-  links open in the real browser, screen stays awake. All verified on-device.
+- An opencode API key (`oc_sk_...`) once leaked into a session log in the previous handoff.
+  Rotate it if that transcript still exists anywhere.
+- Nothing large or secret is committed: no payload, no APK, no keystore, no `android.jar`
+  (all gitignored). The release asset on GitHub does contain the payload — that is why it is a
+  convenient restore source for `stage-assets.ps1`.
+- The notification-listener permission is **not** needed by either app; only
+  `POST_NOTIFICATIONS` for the foreground-service notification.

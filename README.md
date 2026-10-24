@@ -1,17 +1,30 @@
 # opencode on Android
 
-Two Android apps that give [opencode](https://github.com/anomalyco/opencode) a phone-native UI.
-Both are thin WebView shells around `opencode serve`; they differ in where the server comes from.
+Three Android apps that give [opencode](https://github.com/anomalyco/opencode) a phone-native UI.
+All of them are thin WebView shells around `opencode serve`; they differ in where the server
+comes from.
 
-| | `oclaunch/` | `ocstandalone/` |
-|---|---|---|
-| Package | `app.opencode.launcher` | `app.opencode.standalone` |
-| Server provided by | Termux (`RunCommandService`) | the app itself |
-| Needs Termux installed | yes | **no** |
-| APK size | ~26 KB | ~60 MB |
-| Agent shell / git | yes (Termux's) | no (see below) |
+| | `octermux/` | `ocstandalone/` | `oclaunch/` |
+|---|---|---|---|
+| Package | `app.opencode.termux` | `app.opencode.standalone` | `app.opencode.launcher` |
+| Server provided by | Termux (`RunCommandService`) | the app itself | Termux (`RunCommandService`) |
+| Needs Termux installed | yes, configured once | **no** | yes |
+| APK size | ~30 KB | ~62 MB | ~26 KB |
+| Agent shell / git | yes (Termux's) | no (see below) | yes (Termux's) |
+| Status | **the configuration that is known to work** | UI + server work; upstream network unresolved, see `docs/STANDALONE-NETWORK.md` | legacy, superseded by `octermux` |
 
-`ocstandalone` is the one to use. `oclaunch` is kept as a fallback and as the smaller-footprint option.
+`octermux` is the one to use today. `ocstandalone` is the long-term goal (no Termux), and its
+open problem is documented rather than hidden.
+
+## Terms
+
+- **octermux** — WebView shell. On launch it asks Termux to run `~/.shortcuts/oc-server`, then
+  waits for `http://127.0.0.1:4096` and loads the UI. It needs the Termux permission
+  `com.termux.permission.RUN_COMMAND` and `allow-external-apps=true` in Termux.
+- **ocstandalone** — bundles a glibc loader, a minimal glibc runtime and the opencode binary
+  (~181 MB, deflated to ~60 MB in the APK), extracts them on first launch and supervises the
+  server from a foreground service.
+- **oclaunch** — the first version of the Termux path, kept for reference.
 
 ## Why the standalone app is not just a WebView
 
@@ -23,87 +36,96 @@ Both are thin WebView shells around `opencode serve`; they differ in where the s
   stub misbehaves when the ELF layout is rewritten)
 - **no `LD_PRELOAD`**. Termux injects a bionic shim into its own processes that kills the glibc
   loader; a normal app has no such shim, so the environment is simply cleared.
-- on Android 10/11 only, a SIGSYS shim, because the app sandbox traps `statx`. Android 12+ does
-  not trap it, so the shim is not shipped.
+- a resolver configuration, which is the unresolved part on the app side:
+  `docs/STANDALONE-NETWORK.md`.
 
 ## Known limitations
 
-- **No bash, no git.** Termux's `bash`/`git` are bionic binaries and cannot run under the glibc
-  loader, so they are not bundled. opencode's own file tools (read/write/edit/glob/grep) are built
-  into the runtime and *do* work, so the agent can still edit real files.
-- **File access** depends on the All-files-access grant. Without it the project falls back to the
-  app's own external directory.
-- The first launch extracts ~180 MB, so expect a one-time wait with a progress bar.
+- **No bash, no git** in `ocstandalone`. Termux's `bash`/`git` are bionic binaries and cannot run
+  under the glibc loader, so they are not bundled. opencode's own file tools
+  (read/write/edit/glob/grep) are built into the runtime and *do* work.
+- **File access** in `ocstandalone` depends on the All-files-access grant (the setup screen has
+  a row for it). Without it the project falls back to the app's own external directory.
+- The first `ocstandalone` launch extracts ~180 MB, so expect a one-time wait with a progress
+  bar.
 
 ## Build
 
-### Windows (primary, since 2026-10-03)
+Everything builds on Windows with the Android SDK's `aapt2`/`d8`/`apksigner` and a JDK 17+.
+There is no Gradle wrapper: the scripts are a direct port of the original Termux pipeline.
 
-Needs an Android SDK (`ANDROID_HOME`, e.g. `G:\dev\android-sdk`) with `build-tools` and
-at least one platform, plus a JDK 17+ (`JAVA_HOME`; Android Studio's JBR works too).
+Requirements:
+
+- Android SDK with `build-tools` and at least one platform (`ANDROID_HOME` / `ANDROID_SDK_ROOT`)
+- JDK 17+ (`JAVA_HOME`; Android Studio's JBR also works)
+- a signing keystore. The scripts default to `ocstandalone/build/launcher.keystore`
+  (gitignored). Pass `-Keystore <path>` or set `OC_KEYSTORE` to use another one.
+
+### octermux (small, no payload)
 
 ```powershell
-# 1. restore the runtime payload (181 MB, not committed) from any APK that already
-#    contains it - the GitHub release asset or a previous build:
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+$env:JAVA_HOME    = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot'
+$env:KS_ALIAS='<alias>'; $env:KS_PASS='<password>'
+powershell -ExecutionPolicy Bypass -File .\octermux\build.ps1
+# -> octermux\build\opencode-termux.apk
+```
+
+Termux setup (once):
+
+1. `termux.properties` → `allow-external-apps=true`, then restart Termux.
+2. `~/.shortcuts/oc-server` — the server launcher script (a copy is on the test phone at
+   `~/oc-server`; it guards with `flock` and `exec`s
+   `~/.opencode/bin/opencode serve --port 4096`).
+3. Install the APK, open it, grant the RUN_COMMAND permission.
+
+### ocstandalone (heavy, bundles the server)
+
+```powershell
+# 1. restore the 181 MB runtime payload from an APK that already contains it
+#    (the GitHub release asset, or a previous build) - it is not committed:
 .\ocstandalone\stage-assets.ps1 -FromApk C:\path\opencode-android-v1.0.apk
 
-# 2. signing keystore (also not committed - keep a backup OUTSIDE the repo):
-#    copy <backup>\standalone-launcher.keystore ocstandalone\build\launcher.keystore
+# 2. sign with the keystore (restore your backup, or generate one - see below)
+$env:KS_ALIAS='<alias>'; $env:KS_PASS='<password>'
 
 # 3. build
-$env:KS_ALIAS='<alias>'; $env:KS_PASS='<password>'
 powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1
+# -> ocstandalone\build\opencode-solo.apk
 ```
 
-Output: `ocstandalone\build\opencode-solo.apk`. `build.ps1` fails with instructions if
-the keystore or payload is missing, and picks `android.jar` from the SDK's newest
-platform.
+`build.ps1` fails with instructions if the keystore or the payload is missing, and picks
+`android.jar` from the newest installed platform. `stage-assets.ps1` needs only a zip reader,
+so it also works when the source is a release APK.
 
-### Termux (legacy - the original pipeline, kept for reference)
-
-Requires Termux with `aapt2`, `d8`, `apksigner`, `openjdk-21`, and a `android.jar`.
-
-```sh
-# 1. android.jar (27 MB) -- not committed
-mkdir -p ~/build/sdk
-curl -L -o ~/build/p35.zip https://dl.google.com/android/repository/platform-35_r01.zip
-unzip -j ~/build/p35.zip 'android-*/android.jar' -d ~/build/sdk && rm ~/build/p35.zip
-
-# 2. the runtime payload (181 MB) -- not committed, exceeds GitHub's 100 MB file limit
-pkg install glibc-repo && pkg install glibc
-./stage-assets.sh
-
-# 3. sign. the keystore is not committed either
-export KS_ALIAS=<alias>
-export KS_PASS=<password>
-
-./ocstandalone/build.sh
-```
-
-`build.sh` fails with instructions if `android.jar` or the payload is missing.
+> **Keystore**: Android will not install an update whose signature differs from the installed
+> app. Keep the keystore outside the repo. If it is lost, the app has to be uninstalled before a
+> new build can be installed.
 
 ## Install
 
-`rish`/Shizuku notes, all learned the hard way:
+```powershell
+adb install -r ocstandalone\build\opencode-solo.apk
+adb install -r octermux\build\opencode-termux.apk
+```
 
-- `rish` on current Shizuku only runs commands **piped through stdin**. `rish "echo hi"` exits 0
-  and prints nothing, which is indistinguishable from Shizuku being stopped.
-- `pm install` cannot read FUSE paths. Copy to `/data/local/tmp` first, because `system_server`
-  cannot read `/storage/emulated/0`:
-
-  ```sh
-  cp /storage/emulated/0/Download/app.apk /data/local/tmp/a.apk && chmod 644 /data/local/tmp/a.apk
-  pm install -r /data/local/tmp/a.apk
-  ```
-
-- Without Shizuku, copy the APK to `~/storage/shared/Download/` and install it by hand.
+On the phone itself (no adb), copy the APK to Download and open it; allow "install unknown
+apps" for the file manager/browser you use.
 
 ## Debugging
 
-```sh
-# app logs (WebView console messages are mirrored here)
-logcat -s ocstandalone
+```powershell
+adb logcat -s ocstandalone:*     # embedded server output is mirrored here as "srv| ..."
+adb logcat -s octermux:*         # this app only logs the ping/load cycle
+```
 
-# the server's own output
-cat /data/data/app.opencode.standalone/files/home/server.log
+The embedded server also writes `filesDir/home/server.log`, which is not readable over adb.
+
+## Repository layout
+
+```
+octermux/       Termux-backed WebView shell (the working configuration)
+ocstandalone/   self-contained app: payload staging, installer, server service, setup screen
+oclaunch/       original Termux-backed shell, kept for reference
+docs/           network investigation for the standalone app
 ```
