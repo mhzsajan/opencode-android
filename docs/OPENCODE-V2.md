@@ -1,13 +1,15 @@
 # opencode v2 on Android
 
-Updated 2026-10-24. Merged into `master` at `9422ba5` and shipped as the pre-release
-**[v1.5](https://github.com/mhzsajan/opencode-android/releases/tag/v1.5)**; the v1.4 release
-(opencode 1.18.34) remains the stable fallback.
+Updated 2026-10-25. Merged into `master` at `9422ba5`, shipped as the pre-release
+**[v1.5](https://github.com/mhzsajan/opencode-android/releases/tag/v1.5)** (arm64) and then
+**[v1.6](https://github.com/mhzsajan/opencode-android/releases/tag/v1.6)** (arm64 **and** x86_64);
+the v1.4 release (opencode 1.18.34) remains the stable fallback.
 
-**Status: verified on the phone and released, 2026-10-24.** The auth blocker is fixed and the
-on-device checklist in section 5 passed end to end — proxy 200s, UI renders real data, a free
-model answered. Shipped as `versionCode 6` / `versionName 1.5`. **The release is arm64 only**
-(section 6): the bundled payload is aarch64, so it does not serve on the x86_64 emulator yet.
+**Status: verified on the phone (v1.5, arm64) and on the x86_64 emulator (v1.6), 2026-10-24/25.**
+The auth blocker is fixed and the on-device checklist in section 5 passed end to end — proxy 200s,
+UI renders real data, a free model answered. v1.6 adds a second payload so the same app runs on the
+emulator; getting there needed a native x86_64 build plus a ptrace shim for this app's seccomp
+filter, which is what sections 6 and 7 are about.
 
 ## 1. What v2 is and where it lives
 
@@ -128,10 +130,13 @@ supplying the credentials, rather than a cached cookie making the UI look fine.
 `1CAF406246EB9A7E5592A6CC3311C20DB8BA1FB0AA7F40E911CB6E0CFBF79344`. Same signing key as v1.4,
 so it updates in place. The release notes say plainly that it is arm64 only.
 
-## 6. Architecture: arm64 phone, x86_64 emulator
+## 6. Two payloads, one app
 
-The APK contains **no native libs** — it is pure Java. The only arch-bound parts are
-`assets/opencode-bin` and its bundled glibc loader/libs. Two consequences:
+The APK still contains **no native libs of its own** — it is pure Java. Everything
+architecture-bound lives in `assets/`: one `opencode-bin` plus the loader and libs it needs.
+That is what makes two variants cheap: the Java is identical, the payload is not.
+
+### 6.1 Why the x86_64 payload has to be a different build
 
 - **An arm64 emulator cannot run on this host.** `system-images;android-37.0;default;arm64-v8a`
   installs cleanly (1 950 MB) and `avdmanager` creates the AVD, but the emulator exits in under
@@ -143,66 +148,187 @@ The APK contains **no native libs** — it is pure Java. The only arch-bound par
   ```
 
   There is no cross-architecture TCG fallback on Windows, so `Pixel_10_ARM64_API_37` is inert.
-- **On the x86_64 image the arm64 payload does load and execute — but cannot serve.** This
-  contradicts the earlier assumption that `libndk_translation` never handles `execve()`; measured
-  on `emulator-5554` (API 37, `ro.product.cpu.abilist=x86_64,arm64-v8a`,
-  `ro.dalvik.vm.native.bridge=libndk_translation.so`):
+- **The arm64 payload does execute on the x86_64 image, under `libndk_translation` — but it
+  cannot serve.** `ld-linux-aarch64.so.1 opencode-bin --version` prints `opencode v2.1.4`
+  (`Bun v1.4.4 • Linux arm64`); continuing to `serve` produces
+  `panic: Unexpected futex_wait() return code: -2 - ENOENT`, then `Bun has crashed`. So the
+  translator is good enough to start Bun and not good enough to run it. A native x86_64 payload
+  is required, not optional.
 
-  | step | result |
-  |---|---|
-  | `ld-linux-aarch64.so.1 --version` | runs (audit log grants `execute` on the app-data file) |
-  | `ld … ./opencode-bin --version` | **fails**: `opencode-bin: error while loading shared libraries: libc.so.6` |
-  | `ld --library-path <dir> ./opencode-bin --version` | **works** → `opencode v2.1.4`, Bun banner `Bun v1.4.4 … Linux arm64`, prints stats |
-  | same, then continue to `serve` | `panic: Unexpected futex_wait() return code: -2 - ENOENT` → `Bun has crashed` |
+### 6.2 Which payload is installed is decided by the assets
 
-  Two facts worth keeping:
-  - **`LD_LIBRARY_PATH` is invisible to the translated guest**, even though the native loader
-    honours `--library-path`. This also explains the app's own `libc.so.6: cannot open shared
-    object file` loop on the emulator, which is not a missing file.
-  - **Translated arm64 is a dead end for the server.** Bun's runtime needs a working futex; the
-    translator does not provide one. A native x86_64 payload is therefore required, not optional.
+Not by `Build.SUPPORTED_ABIS`. On this x86_64 image that list is
+`x86_64,arm64-v8a` (native bridge), so an ABI check would pick the wrong loader for the payload
+that is actually in the APK. `Installer` therefore asks the payload:
 
-So payload testing needs the physical phone (arm64); UI/Java work can use `Pixel_10_API_37`
-(x86_64, API 37). To make the emulator a full dev target, stage the x86_64 payload —
-`@opencode/cli-linux-x64@2.1.4` exists on npm and is **240 416 944 bytes** unpacked
-(`0x3e` ELF, verified), the same Bun single-file shape as the arm64 package. What that needs:
+| method | how it decides |
+|---|---|
+| `loaderName()` | first `assets/lib/ld-*` entry, alphabetically |
+| `isX64()` | `e_machine` of `assets/opencode-bin` — `0x3e` is x86_64, `0xb7` is aarch64 |
+| `shim()` | presence of `assets/shim`, not the architecture |
+| `isInstalled()` | stamp is `payload-v6/<loader>`, so switching variants reinstalls instead of trusting a stale payload |
 
-1. `assets/opencode-bin` ← the x64 binary;
-2. `assets/lib/` ← x86_64 glibc (`ld-linux-x86-64.so.2`, `libc.so.6`, `libm`, `libdl`,
-   `libpthread`) taken from an Ubuntu/Debian base rootfs, **not** the host's Windows DLLs;
-3. the resolver patch re-applied to the new `libc.so.6`;
-4. `Installer.java` hardcodes `ld-linux-aarch64.so.1` in two places (the lib list and the loader
-   getter), so the loader name has to be chosen from `Build.SUPPORTED_ABIS` instead of spelled
-   literally; `ServerService.launch()` should also pass `--library-path` explicitly instead of
-   relying on `LD_LIBRARY_PATH` (see above).
+`ServerService.launch()` builds argv from the same answers: `[shim] ld.so --library-path <lib>
+opencode-bin serve …`. `--library-path` is passed explicitly as well as `LD_LIBRARY_PATH`
+because a translated guest never sees the env var; the flag works either way.
 
-**The resolver patch is the live blocker for x64.** Ubuntu 24.04's glibc 2.39 has
-`/etc/resolv.conf` as a 16-byte slot (15 chars + NUL) followed immediately by `LOCALDOMAIN`, and
-the ARM build's trick — rewriting a long compiled-in Termux path to
-`/data/data/app.opencode.standalone/files/resolv.conf` (53 chars) — only works because Termux's
-slot is 48+ bytes. A 53-char absolute path cannot fit in 16 bytes, so the x64 build needs either a
-shorter path (≤15 chars, which no app-writable location has) or a **relative** path such as
-`resolv.conf`, which works only if the child's cwd is the directory holding the file — and the
-child's cwd is currently the user's project directory, which is not app-private.
+### 6.3 The two payloads
 
-A dual-arch APK would carry ~490 MB of payload, so prefer **two payload variants** over one fat
-APK. Whether a native glibc x86_64 ELF executes under the emulator is still unproven, but the
-mechanism is the normal one (`targetSdk 28` permits `execve()` of app-data files, the kernel ABI
-is plain Linux x86_64, and no translation layer is involved).
+| | arm64 (phones) | x86_64 (emulator) |
+|---|---|---|
+| npm package | `@opencode/cli-linux-arm64@2.1.4` | `@opencode/cli-linux-x64-musl@2.1.4` |
+| `assets/opencode-bin` | 236 112 888 bytes, `aarch64` | 239 330 728 bytes, `x86_64` |
+| libc | Termux glibc 2.38 | musl (Termux x86_64) |
+| `assets/lib/` | `ld-linux-aarch64.so.1`, `libc.so.6`, `libm.so.6`, `libpthread.so.0`, `libdl.so.2` | `ld-musl-x86_64.so.1`, `libstdc++.so.6`, `libgcc_s.so.1` |
+| launcher | the loader itself | `assets/shim` → loader |
+| APK | `opencode-solo.apk`, 114 751 180 bytes, SHA-256 `518C86B212CE7C374AA2D2B9E8992962E4A648B1EE1CB314ED21ECD5139AE3FC` | `opencode-solo-x64.apk`, 114 407 041 bytes, SHA-256 `B1EAE1C9FC4B57D05750E28A0A8DBDE4AF50AEAC601E1AC34B385A9C51753428` |
 
-## 7. Open questions
+Both are `versionCode 7` / `versionName 1.6`, `targetSdk 28`, **not debuggable**, same signer
+`84:E7:50:…:10:6C:31`. Same `applicationId` and same `versionCode` means Android treats them as
+the same app: switching variants on one device needs an uninstall first.
 
-- Does the v2 UI use WebSocket (not just SSE)? The proxy tunnels upgrades after the handshake,
-  but that path is untested.
-- v2 migrated the existing v1 data directory on first start (`database migration ...` in
-  logcat). Keep a backup of a working v1 install's data if a downgrade must be tested.
-- App versioning: **1.5 (code 6) is released** as a pre-release; the v1.4 release stays the
-  stable fallback. The next build carries the x86_64 payload and should be 1.6 (code 7).
-- Can a native glibc x86_64 payload serve under the x86_64 emulator? Believed yes — it is plain
-  Linux x86_64 with no translation layer, and `targetSdk 28` permits `execve()` of app-data
-  files — but unproven. The open sub-problem is the **resolver path** (section 6): Ubuntu
-  glibc's 16-byte slot cannot hold an app-private absolute path, so it needs a relative path plus
-  a controlled cwd, or a glibc build whose compiled-in path is long enough to rewrite.
-- Is `Bun`'s DNS via glibc `getaddrinfo` on x64 too (hence the resolver patch), or does the x64
-  build use its own resolver? The arm64 build demonstrably needed the patch; do not assume x64
-  behaves the same without testing a real hostname lookup.
+Staging is reproducible from a clone:
+
+```powershell
+powershell -File ocstandalone\stage-assets-v2.ps1  -FromApk <arm64 apk>   # npm + glibc libs
+powershell -File ocstandalone\stage-assets-x64.ps1 -FromApk <x64 apk>     # npm + musl libs + shim
+powershell -File ocstandalone\build.ps1 [-Arch x64]
+```
+
+### 6.4 The resolver, one more time
+
+Both libcs have a **compiled-in** resolver path, and neither path exists in the app sandbox.
+`build.ps1` rewrites one string per payload:
+
+| payload | compiled in | rewritten to | why that shape |
+|---|---|---|---|
+| aarch64 glibc | `/data/data/com.termux/files/usr/glibc/etc/resolv.conf` (53-byte slot) | `/data/data/app.opencode.standalone/files/resolv.conf` (52 chars) | absolute is fine; the slot is long |
+| x86_64 musl | `/etc/resolv.conf` (16-byte slot) | `.resolv.conf` | 53 chars cannot fit; a relative name is resolved against the child's cwd |
+
+So `writeResolvConf()` writes `files/resolv.conf` always, and additionally
+`<project>/.resolv.conf` when `isX64()` — `launch()` already sets the child's cwd to the project
+directory. Verified from inside the payload's own context: `./.resolv.conf` is 87 bytes with the
+live nameservers, and raw DNS to `10.0.2.3`/`8.8.8.8` returns answers.
+
+An earlier plan used x86_64 **glibc** from an Ubuntu rootfs. It was abandoned: Ubuntu's 16-byte
+`/etc/resolv.conf` slot forces the same relative-path trick, while its libs are larger and its
+loader adds nothing. musl is the payload opencode actually publishes for this platform.
+
+## 7. The x86_64 blocker: a seccomp filter that traps syscalls musl issues
+
+This was the real failure, and it only appears once the resolver works. The app runs with
+`targetSdk 28` (required: it is what permits `execve()` of an executable in app data), so it gets
+the legacy `untrusted_app_27` SELinux domain and a seccomp filter derived from bionic's policy.
+That filter was written for **bionic**, which never issues the pre-`*at` variants: `lstat`,
+`mkdir`, `chmod`, `epoll_wait`, `poll`, `accept`, `dup2`, `inotify_init`, … A musl/Zig build does.
+They are not killed with `EPERM`; they are **`SECCOMP_RET_TRAP`**ed, i.e. delivered as `SIGSYS`.
+Bun treats that as a fatal signal and dies at startup, which looks exactly like the resolver bug
+it replaced.
+
+Measured with static probes installed into the app's own `filesDir` and run with the app's uid:
+
+| syscall | result |
+|---|---|
+| `poll` — `nfds=0`, 1 fd/0 ms, 1 fd/20 ms | **SIGSYS every time** |
+| `ppoll`, `epoll_pwait` | allowed |
+| `epoll_wait` | **SIGSYS** |
+| `ptrace(PTRACE_PEEKDATA)` | `-EFAULT` |
+| `ptrace(PTRACE_POKEDATA)` | works |
+| raw DNS to `10.0.2.3` / `8.8.8.8` | 3 answers each |
+| TCP connect `1.1.1.1:443` | OK |
+
+### 7.1 The shim
+
+`shim/shim.c` is a **static, freestanding x86_64** tracer (5 728 bytes, SHA-256
+`DB0F289C78FC697EE6D9EA4275AAFF55A5EAEF1A1EE76682B606239C168DE9C3`, `e_machine=0x3e`). It makes
+raw syscalls only, so it needs no libc and is compiled on Windows.
+
+It `PTRACE_TRACEME`s, `execve`s the loader with the original argv, and on each `SIGSYS`:
+
+1. reads the trapped syscall number from `orig_rax`;
+2. rewrites the argument registers for the `*at`/newer equivalent;
+3. rewinds `rip` by 2 (undo `syscall`) and sets **both `rax` and `orig_rax`** to the new number;
+4. suppresses the signal.
+
+Translation table, all verified in place:
+
+| trapped | becomes |
+|---|---|
+| `lstat` 6 | `newfstatat` 262 (with `AT_SYMLINK_NOFOLLOW`) |
+| `access` 21 | `faccessat` 269 |
+| `chmod` 90 | `fchmodat` 268 |
+| `chown` 92 / `lchown` 94 | `fchownat` 260 |
+| `mkdir` 83 | `mkdirat` 258 |
+| `rename` 82 | `renameat` 264 |
+| `unlink` 87 / `rmdir` 84 | `unlinkat` 263 |
+| `link` 86 | `linkat` 265 |
+| `symlink` 88 | `symlinkat` 266 |
+| `mknod` 133 | `mknodat` 259 |
+| `creat` 85 | `openat` 257 |
+| `dup2` 33 | `dup3` 292 |
+| `accept` 43 | `accept4` 288 |
+| `epoll_create` 213 | `epoll_create1` 291 |
+| `epoll_wait` 232 | `epoll_pwait` 281 |
+| `inotify_init` 253 | `inotify_init1` 294 |
+| `poll` 7 | `ppoll` 271 |
+
+`poll` is the only one that cannot be done with registers alone: `ppoll` takes a `timespec*`
+instead of milliseconds. The shim writes one into the tracee's stack. It goes at `rsp-512`
+(`-256` and `-128` on retry), skipping the 128-byte red zone — and it must be written with
+`POKEDATA`, because `PEEKDATA` returns `-EFAULT` under this filter.
+
+Two properties that make this safe to ship: `PTRACE_O_EXITKILL` means the payload cannot outlive
+the app, and the shim is **only** packaged with the x86_64 payload. The aarch64 payload was built
+against Termux's glibc, makes no trapped calls, and keeps the direct-loader path — presence of
+`assets/shim` selects the launch path, so that stays true without an architecture check.
+
+### 7.2 End-to-end evidence
+
+On `emulator-5554` (Pixel_10_API_37, x86_64, API 37, Play Store image, no root), installed from
+the released x64 APK:
+
+| check | result |
+|---|---|
+| first launch | Setup screen renders, 8 permission groups listed |
+| server | `/api/info` → `{"version":"2.1.4","pid":32726,…}` through the auth proxy on 4097 |
+| model call | `opencode` / `big-pickle`, no API key: reply `hello`, 3 511 in / 3 out, cost 0 |
+| agent shell tool | `uname -m; id -u; echo SANDBOX_OK` → `x86_64`, `10243`, `SANDBOX_OK`, `exit: 0` |
+| where it ran | as the app's uid, inside the sandbox — not the host |
+
+The last row is the one that matters: model round-trip **and** process spawn **and** the tool
+result coming back all work under the filter, through the shim. Captured in the app's own UI at
+`docs/evidence/x64-emulator-shell-tool.png`.
+
+Driving it from a PC needs no token — the proxy adds the credentials:
+
+```
+adb forward tcp:8099 tcp:4097
+POST http://127.0.0.1:8099/api/session/<id>/prompt
+     {"text":"…","model":{"providerID":"opencode","id":"big-pickle"}}
+```
+
+The body shape is not `{parts:[…]}` and not `{prompt:{…}}`; both are 400. The UI's own
+`Prompt` schema is `{text, files?, agents?, skills?}`.
+
+## 8. Known limits
+
+- **models.dev times out on this host, and it is bandwidth, not a bug.** The log shows
+  `Failed to fetch models.dev cause="Cause([Fail(TimeoutError: Operation timed out after '10s')])"`.
+  `api.json` is 5 912 831 bytes and takes 11.98–12.57 s here (3 samples) against Bun's 10 s
+  deadline. It happens with and without the shim, so it predates this work. The built-in
+  `opencode` provider still answers; a provider whose catalogue lives only in models.dev may show
+  an incomplete model list until the link is faster.
+- **No arm64 device is available any more.** The arm64 artifact is released and was verified on
+  the phone; further development happens on the emulator with the x64 variant.
+- **One variant per install.** Same `versionCode`: `adb install` of the other variant fails with
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE` until the app is uninstalled.
+- **The release build is not debuggable**, which is correct for shipping but removes `run-as`.
+  Swapping `files/shim` for an experiment needs a debuggable build (and `am force-stop` first, or
+  `cp` fails with `Text file busy`).
+- **WebSocket upgrades are still untested.** `AuthProxy` tunnels the upgrade after the handshake;
+  the UI so far only needed SSE.
+- **v2 migrated the v1 data directory** on first start. Keep a copy of a working v1 install's data
+  if a downgrade has to be tested.
+- The bundled payload has **no git**; the agent's shell runs as the app's uid with the project
+  directory on shared storage (`/storage/emulated/0/OpenCode`), so files written there persist and
+  are visible over `adb`.

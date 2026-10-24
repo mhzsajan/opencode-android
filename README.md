@@ -1,14 +1,16 @@
 # opencode on Android
 
-Latest release: **[v1.5](https://github.com/mhzsajan/opencode-android/releases/tag/v1.5)** (pre-release) —
-opencode **2.1.4** with a loopback auth proxy, verified on-device. The previous
-**[v1.4](https://github.com/mhzsajan/opencode-android/releases/tag/v1.4)** (opencode 1.18.34) stays
-the stable fallback.
+Latest release: **[v1.6](https://github.com/mhzsajan/opencode-android/releases/tag/v1.6)** (pre-release) —
+opencode **2.1.4** with a loopback auth proxy, in **two payload variants**: arm64 for phones and
+x86_64 for the Android emulator. Both were verified end to end (chat and the agent's shell tool).
+The previous **[v1.4](https://github.com/mhzsajan/opencode-android/releases/tag/v1.4)** (opencode
+1.18.34) stays the stable fallback.
 
-**v1.5 is arm64 only.** The bundled runtime payload is an aarch64 binary, so the app does not serve
-on an x86_64 emulator yet; a native x86_64 payload variant is in progress. Why, and the exact
-failure mode: [`docs/OPENCODE-V2.md`](docs/OPENCODE-V2.md) §6. Dev environment (SDK/AVDs on `G:`,
-no arm64 emulator possible on this host): [`docs/DEV-ENVIRONMENT.md`](docs/DEV-ENVIRONMENT.md).
+The two APKs share `applicationId` and `versionCode`, so install exactly one per device — switching
+variants needs an uninstall first. Why the x86_64 build is a separate payload (musl, plus a ptrace
+shim for the app's seccomp filter): [`docs/OPENCODE-V2.md`](docs/OPENCODE-V2.md) §6. Dev environment
+(SDK/AVDs on `G:`, no arm64 emulator possible on this host):
+[`docs/DEV-ENVIRONMENT.md`](docs/DEV-ENVIRONMENT.md).
 
 Three Android apps that give [opencode](https://github.com/anomalyco/opencode) a phone-native UI.
 All of them are thin WebView shells around `opencode serve`; they differ in where the server
@@ -19,22 +21,25 @@ comes from.
 | Package | `app.opencode.termux` | `app.opencode.standalone` | `app.opencode.launcher` |
 | Server provided by | Termux (`RunCommandService`) | the app itself | Termux (`RunCommandService`) |
 | Needs Termux installed | yes, configured once | **no** | yes |
-| APK size | ~30 KB | ~62 MB | ~26 KB |
-| Agent shell / git | yes (Termux's) | no (see below) | yes (Termux's) |
-| Status | **the configuration that is known to work** | **works on-device, verified 2026-10-24** (chat included; free models need no key) | legacy, superseded by `octermux` |
+| APK size | ~30 KB | ~114 MB | ~26 KB |
+| Agent shell / git | yes (Termux's) | **yes — shell tool runs, inside the app sandbox** (verified 2026-10-24); no system git | yes (Termux's) |
+| Status | **the configuration that is known to work** | **works on-device and on the x86_64 emulator** (chat included; free models need no key) | legacy, superseded by `octermux` |
 
-`ocstandalone` now reaches the network and completes chat on the phone. `octermux` remains the
-smaller option and still has Termux's bash/git for the agent. The long history of the standalone
-networking bug is in [`docs/STANDALONE-NETWORK.md`](docs/STANDALONE-NETWORK.md).
+`ocstandalone` now reaches the network, completes chat, and runs the agent's shell tool — as the
+app's own uid, inside the sandbox. `octermux` remains the smaller option and still has Termux's
+bash/git for the agent. The long history of the standalone networking bug is in
+[`docs/STANDALONE-NETWORK.md`](docs/STANDALONE-NETWORK.md).
 
 ## Terms
 
 - **octermux** — WebView shell. On launch it asks Termux to run `~/.shortcuts/oc-server`, then
   waits for `http://127.0.0.1:4096` and loads the UI. It needs the Termux permission
   `com.termux.permission.RUN_COMMAND` and `allow-external-apps=true` in Termux.
-- **ocstandalone** — bundles a glibc loader, a minimal glibc runtime and the opencode binary
-  (~181 MB, deflated to ~60 MB in the APK), extracts them on first launch and supervises the
-  server from a foreground service.
+- **ocstandalone** — bundles a loader, a minimal libc runtime and the opencode binary
+  (~236 MB arm64, ~239 MB x86_64; deflated to ~114 MB in the APK), extracts them on first launch
+  and supervises the server from a foreground service. The x86_64 payload additionally ships a
+  small ptrace shim (built from [`shim/shim.c`](shim/shim.c)) because this app's `targetSdk 28`
+  seccomp filter traps syscalls a musl build issues.
 - **oclaunch** — the first version of the Termux path, kept for reference.
 
 ## Why the standalone app is not just a WebView
@@ -94,27 +99,37 @@ Termux setup (once):
 
 ### ocstandalone (heavy, bundles the server)
 
+Two payload variants exist; stage the one you need (payloads are not committed — each binary is
+over GitHub's 100 MB per-file limit).
+
 ```powershell
-# 1. restore the 181 MB runtime payload from an APK that already contains it
-#    (the GitHub release asset, or a previous build) - it is not committed:
-.\ocstandalone\stage-assets.ps1 -FromApk C:\path\opencode-android-v1.0.apk
+# 1a. arm64 payload (phones): binary from npm, glibc runtime from a released APK
+powershell -ExecutionPolicy Bypass -File .\ocstandalone\stage-assets-v2.ps1 `
+    -FromApk C:\path\opencode-solo.apk
+
+# 1b. -or- x86_64 payload (emulator): musl binary from npm, runtime from the v1.6 x64 APK,
+#     plus the shim compiled from shim\shim.c
+powershell -ExecutionPolicy Bypass -File .\ocstandalone\stage-assets-x64.ps1 `
+    -FromApk C:\path\opencode-solo-x64.apk
 
 # 2. sign with the keystore (restore your backup, or generate one - see below)
 $env:KS_ALIAS='<alias>'; $env:KS_PASS='<password>'
 
-# 3. build
-powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1
-# -> ocstandalone\build\opencode-solo.apk
+# 3. build (omit -Arch for arm64)
+powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1 -Arch x64
+# -> ocstandalone\build\opencode-solo.apk      (arm64)
+# -> ocstandalone\build\opencode-solo-x64.apk  (x86_64)
 ```
 
 `build.ps1` fails with instructions if the keystore or the payload is missing, and picks
-`android.jar` from the newest installed platform. `stage-assets.ps1` needs only a zip reader,
-so it also works when the source is a release APK.
+`android.jar` from the newest installed platform. Both staging scripts need only a zip reader for
+the runtime libs, so a release APK is a valid source. The x64 build also rebuilds the shim if
+`assets\x64\shim` is absent — only `shim\shim.c` is tracked.
 
 Two steps in the Windows script matter for correctness:
 
-- it **patches the bundled `libc.so.6`** so glibc reads `files/resolv.conf` instead of Termux's
-  path (see `docs/STANDALONE-NETWORK.md`);
+- it **patches the bundled libc's resolver path** so it reads an app-writable file instead of
+  Termux's path (arm64) or `/etc/resolv.conf` (x64) — see `docs/STANDALONE-NETWORK.md`;
 - it **adds assets and `classes.dex` itself** with explicit forward-slash entry names. `aapt2`
   with `-A` on Windows writes `assets/lib\libc.so.6` (backslash), which `AssetManager.open()`
   cannot find — that bug made the first run fail with `FileNotFoundException`.

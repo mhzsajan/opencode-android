@@ -4,20 +4,31 @@
 # Requirements:
 #   - Android SDK with build-tools        (ANDROID_HOME or ANDROID_SDK_ROOT)
 #   - JDK 17+                             (JAVA_HOME; falls back to Android Studio's JBR)
-#   - staged assets:  .\assets\opencode-bin + .\assets\lib\*   (restore via stage-assets.ps1)
+#   - staged payload: .\assets\arm64\  or  .\assets\x64\     (restore via stage-assets-v2.ps1 / stage-assets-x64.ps1)
+#                                         each holding opencode-bin plus lib\*
 #   - signing keystore: .\build\launcher.keystore              (keep a copy outside the repo!)
 #
 # Usage:
 #   $env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
-#   powershell -ExecutionPolicy Bypass -File build.ps1
+#   powershell -ExecutionPolicy Bypass -File build.ps1                 # arm64 -> opencode-solo.apk
+#   powershell -ExecutionPolicy Bypass -File build.ps1 -Arch x64       # x86_64 -> opencode-solo-x64.apk
 
 param(
+    [ValidateSet('arm64', 'x64')]
+    [string]$Arch = 'arm64',
     [string]$AndroidJar = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $ROOT = $PSScriptRoot
 $OUT = Join-Path $ROOT 'build'
+$PAYLOAD = Join-Path (Join-Path $ROOT 'assets') $Arch
+# Distinct output names: both variants share applicationId and versionCode, so
+# keeping them apart by filename is what stops one overwriting the other in
+# build\. Same versionCode also means neither can be installed over the other
+# without an uninstall; that only matters when switching a single device.
+$APK_NAME = 'opencode-solo.apk'
+if ($Arch -eq 'x64') { $APK_NAME = 'opencode-solo-x64.apk' }
 
 function Resolve-Env([string]$name) {
     $v = [Environment]::GetEnvironmentVariable($name)
@@ -73,43 +84,104 @@ New-Item -ItemType Directory -Force -Path $OUT | Out-Null
 if (-not (Test-Path $KS)) {
     throw "keystore missing: $KS (restore standalone-launcher.keystore from your backup)"
 }
-if (-not (Test-Path (Join-Path $ROOT 'assets\opencode-bin'))) {
-    throw "assets missing: run stage-assets.ps1 -FromApk <built-or-release apk>"
+if (-not (Test-Path (Join-Path $PAYLOAD 'opencode-bin'))) {
+    throw "payload missing: $PAYLOAD\opencode-bin (run stage-assets-v2.ps1 for arm64, stage-assets-x64.ps1 for x64)"
+}
+if (-not (Test-Path (Join-Path $PAYLOAD 'lib'))) {
+    throw "payload missing: $PAYLOAD\lib"
+}
+# The shim is only shipped with x86_64. Refuse a wrong-architecture or dynamic
+# binary here: the failure it would cause is an app that dies with SIGSYS at
+# launch, which looks identical to the original bug.
+$shimPath = Join-Path $PAYLOAD 'shim'
+# The binary is not tracked (.gitignore), so a fresh clone has only shim\shim.c.
+# Build it rather than failing: the source and its exact flags ship with the
+# repo, and the output is byte-identical between builds.
+if ($Arch -eq 'x64' -and -not (Test-Path $shimPath)) {
+    $shimBuild = Join-Path (Split-Path $ROOT -Parent) 'shim\build.ps1'
+    if (-not (Test-Path $shimBuild)) { throw "shim missing and no builder: $shimBuild" }
+    Write-Host "==> shim missing, building from shim\shim.c"
+    & powershell -ExecutionPolicy Bypass -File $shimBuild
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $shimPath)) { throw "shim build failed: see $shimBuild" }
+}
+if (Test-Path $shimPath) {
+    $sb = [System.IO.File]::ReadAllBytes($shimPath)
+    if ($sb.Length -lt 64 -or $sb[0] -ne 0x7f -or $sb[1] -ne 0x45) {
+        throw "shim is not an ELF file: $shimPath"
+    }
+    $machine = $sb[18] -bor ($sb[19] -shl 8)
+    if ($machine -ne 0x3e) { throw ("shim is not x86_64 (e_machine=0x{0:x2})" -f $machine) }
+    if ($Arch -ne 'x64') { throw "shim is only supported with -Arch x64" }
+    Write-Host "==> shim: $($sb.Length) bytes, x86_64 static"
 }
 
-# --- patch the bundled glibc resolver path --------------------------------
-# The payload is Termux's glibc build, so glibc's resolver path is compiled in as
-# /data/data/com.termux/files/usr/glibc/etc/resolv.conf -- a directory that does
-# not exist for this app, which leaves the child with no nameserver at all
-# ("Failed to fetch models.dev ... Unable to connect"). Point that single string
-# at a file this app owns; ServerService writes it before spawning the server.
-# It must match ServerService.RESOLV_CONF and fit the original 53-byte slot.
-$RESOLV_OLD = '/data/data/com.termux/files/usr/glibc/etc/resolv.conf'
-$RESOLV_NEW = '/data/data/app.opencode.standalone/files/resolv.conf'
-$libc = Join-Path (Join-Path $ROOT 'assets') 'lib\libc.so.6'
-$libcBytes = [System.IO.File]::ReadAllBytes($libc)
-$libcText = [System.Text.Encoding]::ASCII.GetString($libcBytes)
-if ($libcText.IndexOf($RESOLV_NEW) -ge 0) {
-    Write-Host '==> libc.so.6 resolver path already patched'
+# --- patch the bundled libc resolver path ---------------------------------
+# Each payload's libc has its resolver path compiled in. The staged payloads
+# stay pristine: patch a copy under build\.
+#
+#   arm64 (Termux glibc, 53-byte slot)
+#     /data/data/com.termux/files/usr/glibc/etc/resolv.conf
+#       -> /data/data/app.opencode.standalone/files/resolv.conf   (52 chars)
+#
+#   x64 (musl's ld-musl-x86_64.so.1, 16-byte slot)
+#     /etc/resolv.conf -> .resolv.conf   (relative, resolved against the child cwd)
+#
+# Without this res_init() finds no nameserver at all ("Failed to fetch models.dev
+# ... Unable to connect"). The names must match ServerService.RESOLV_CONF /
+# RESOLV_CONF_X64, and writeResolvConf() writes the file before each spawn.
+if ($Arch -eq 'arm64') {
+    $RESOLV_OLD = '/data/data/com.termux/files/usr/glibc/etc/resolv.conf'
+    $RESOLV_NEW = '/data/data/app.opencode.standalone/files/resolv.conf'
 } else {
-    $pos = $libcText.IndexOf($RESOLV_OLD)
-    if ($pos -lt 0) { throw "resolver path not found in $libc (payload changed?)" }
+    $RESOLV_OLD = '/etc/resolv.conf'
+    $RESOLV_NEW = '.resolv.conf'
+}
+
+$PATCHED = Join-Path $OUT "payload-$Arch"
+if (Test-Path $PATCHED) { Remove-Item $PATCHED -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $PATCHED | Out-Null
+Copy-Item (Join-Path $PAYLOAD 'lib\*') $PATCHED -Force
+
+# Which file holds the resolver path depends on the payload (glibc has it in
+# libc.so.6; musl folds libc into ld-musl-*.so.1), so find it rather than
+# naming it. Exactly one file must contain it - a silent no-op here is what
+# makes every hostname lookup fail at runtime with no build-time error.
+$patchedCount = 0
+Get-ChildItem $PATCHED -File | ForEach-Object {
+    $file = $_.FullName
+    $bytes = [System.IO.File]::ReadAllBytes($file)
+    $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+    if ($text.IndexOf($RESOLV_NEW + [char]0) -ge 0) {
+        Write-Host "==> $($_.Name): resolver path already patched ($Arch)"
+        $patchedCount++
+        return
+    }
+    $pos = $text.IndexOf($RESOLV_OLD)
+    if ($pos -lt 0) { return }
     if ($RESOLV_NEW.Length -gt $RESOLV_OLD.Length) {
-        throw 'replacement resolver path does not fit the original slot'
+        throw "$($_.Name): replacement resolver path ($($RESOLV_NEW.Length)) does not fit the original $($RESOLV_OLD.Length)-byte slot"
     }
     $newBytes = [System.Text.Encoding]::ASCII.GetBytes($RESOLV_NEW)
-    [Array]::Copy($newBytes, 0, $libcBytes, $pos, $newBytes.Length)
-    $libcBytes[$pos + $newBytes.Length] = 0
-    [System.IO.File]::WriteAllBytes($libc, $libcBytes)
-    Write-Host "==> patched resolver path in libc.so.6 (offset $pos)"
+    [Array]::Copy($newBytes, 0, $bytes, $pos, $newBytes.Length)
+    # NUL-fill the rest of the slot, stopping before the old terminator
+    for ($i = $pos + $newBytes.Length; $i -lt $pos + $RESOLV_OLD.Length; $i++) { $bytes[$i] = 0 }
+    [System.IO.File]::WriteAllBytes($file, $bytes)
+    Write-Host "==> patched resolver path in $($_.Name) ($Arch, offset $pos): $RESOLV_NEW"
+    $patchedCount++
+}
+if ($patchedCount -eq 0) {
+    throw "no payload file contains '$RESOLV_OLD' ($Arch) - the payload changed?"
 }
 
 # --- clean ----------------------------------------------------------------
+# Only this run's outputs. This used to remove both APK names, so building one
+# architecture silently deleted the other variant's finished artifact — the
+# second build of a two-variant release left exactly one file behind.
 foreach ($d in @('gen', 'classes', 'dex')) {
     $p = Join-Path $OUT $d
     if (Test-Path $p) { Remove-Item $p -Recurse -Force }
 }
-foreach ($f in @('res.zip', 'base.apk', 'unsigned.apk', 'aligned.apk', 'opencode-solo.apk', 'opencode-solo.apk.idsig')) {
+foreach ($f in @('res.zip', 'base.apk', 'unsigned.apk', 'aligned.apk', $APK_NAME, "$APK_NAME.idsig")) {
     $p = Join-Path $OUT $f
     if (Test-Path $p) { Remove-Item $p -Force }
 }
@@ -169,12 +241,22 @@ try {
             $in = $e.Open()
             try { & $copy $in $e.FullName } finally { $in.Dispose() }
         }
-        # bundled runtime payload: asset entries must use '/' separators
-        $assetsRoot = Join-Path $ROOT 'assets'
-        Get-ChildItem $assetsRoot -Recurse -File | ForEach-Object {
-            $rel = $_.FullName.Substring($assetsRoot.Length + 1).Replace('\', '/')
+        # bundled runtime payload: asset entries must use '/' separators.
+        # Exactly opencode-bin + lib/* end up in the apk, so Installer's
+        # assets.list("lib") sees only the payload this variant carries.
+        $in = [System.IO.File]::OpenRead((Join-Path $PAYLOAD 'opencode-bin'))
+        try { & $copy $in 'assets/opencode-bin' } finally { $in.Dispose() }
+        Get-ChildItem $PATCHED -File | ForEach-Object {
             $in = [System.IO.File]::OpenRead($_.FullName)
-            try { & $copy $in ('assets/' + $rel) } finally { $in.Dispose() }
+            try { & $copy $in ('assets/lib/' + $_.Name) } finally { $in.Dispose() }
+        }
+        # Optional seccomp shim. Installer looks for assets/shim and, when it is
+        # there, prefixes the launch command with it; absent (arm64) the payload
+        # is exec'd directly.
+        $shimSrc = Join-Path $PAYLOAD 'shim'
+        if (Test-Path $shimSrc) {
+            $in = [System.IO.File]::OpenRead($shimSrc)
+            try { & $copy $in 'assets/shim' } finally { $in.Dispose() }
         }
         # classes.dex (replaces the jar step, which would rewrite the zip again)
         $dex = Join-Path $OUT 'dex\classes.dex'
@@ -191,20 +273,21 @@ Write-Host '==> zipalign'
 if ($LASTEXITCODE -ne 0) { throw 'zipalign failed' }
 
 Write-Host '==> sign'
+$APK = Join-Path $OUT $APK_NAME
 $sg = @('sign', '--ks', $KS, '--ks-key-alias', $KS_ALIAS,
     '--ks-pass', "pass:$KS_PASS", '--key-pass', "pass:$KS_PASS",
     '--v4-signing-enabled', 'true',
-    '--out', (Join-Path $OUT 'opencode-solo.apk'),
+    '--out', $APK,
     $aligned)
 & $APKSIGNER @sg
 if ($LASTEXITCODE -ne 0) { throw 'apksigner sign failed' }
 
 Write-Host '==> verify'
-& $APKSIGNER verify (Join-Path $OUT 'opencode-solo.apk')
+& $APKSIGNER verify $APK
 if ($LASTEXITCODE -ne 0) { throw 'apksigner verify failed' }
-$badging = & $AAPT2 dump badging (Join-Path $OUT 'opencode-solo.apk')
+$badging = & $AAPT2 dump badging $APK
 Write-Host ($badging | Select-Object -First 1)
-Get-Item (Join-Path $OUT 'opencode-solo.apk') | ForEach-Object {
-    Write-Host ('  {0}  {1:N0} bytes' -f $_.Name, $_.Length)
+Get-Item $APK | ForEach-Object {
+    Write-Host ('  {0}  {1:N0} bytes  ({2})' -f $_.Name, $_.Length, $Arch)
 }
-Write-Host ('OK: ' + (Join-Path $OUT 'opencode-solo.apk'))
+Write-Host ('OK: ' + $APK)

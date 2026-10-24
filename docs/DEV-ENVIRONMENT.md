@@ -83,12 +83,16 @@ FATAL | Avd's CPU Architecture 'arm64' is not supported by the QEMU2 emulator on
         System image must match the host architecture.
 ```
 
-There is no cross-architecture TCG fallback on Windows. `libndk_translation` (present in the
-x86_64 images, which advertise `abilist64=x86_64,arm64-v8a`) does **not** help: it translates
-arm64 native *libraries* loaded inside an app process, not an `execve()` of a glibc ELF.
+There is no cross-architecture TCG fallback on Windows.
 
-Consequence for this project: the opencode payload is an aarch64 glibc ELF, so **payload testing
-needs the physical phone**. See `docs/OPENCODE-V2.md` §6 for the x86_64 payload route.
+`libndk_translation` (present in the x86_64 images, which advertise `abilist64=x86_64,arm64-v8a`)
+turns out to translate **more** than native libraries: the arm64 payload's loader and Bun both
+start under it (`opencode v2.1.4`, `Bun v1.4.4 • Linux arm64`). It still cannot serve — Bun panics
+with `Unexpected futex_wait() return code: -2 - ENOENT` — so it is a curiosity, not a route.
+
+Consequence for this project: **an x86_64 payload variant is required for emulator work**, and
+since 1.6 there is one (`opencode-solo-x64.apk`, musl + a ptrace shim). The arm64 artifact is
+verified on the phone and needs no emulator. See `docs/OPENCODE-V2.md` §6–7.
 
 ## 6. Acceleration and graphics
 
@@ -114,15 +118,17 @@ sdk.dir=G\:\\dev\\android-sdk
 $adb = 'G:\dev\android-sdk\platform-tools\adb.exe'
 
 & $adb devices -l
-& $adb -s emulator-5554 install -r .\ocstandalone\build\opencode-solo.apk
+& $adb -s emulator-5554 install -r .\ocstandalone\build\opencode-solo-x64.apk
 & $adb -s emulator-5554 logcat -s ocstandalone:*
 
 # screenshot: write to the device, then pull (piping exec-out through '>' corrupts the PNG)
 & $adb -s emulator-5554 shell screencap -p /sdcard/x.png
 & $adb -s emulator-5554 pull /sdcard/x.png "$env:TEMP\x.png"
 
-# reach the on-device server API from the PC
-& $adb -s emulator-5554 forward tcp:4096 tcp:4096
+# reach the on-device server API from the PC: 4097 is the auth proxy and needs no credentials,
+# 4096 is the server itself and answers 401 without HTTP Basic
+& $adb -s emulator-5554 forward tcp:8099 tcp:4097
+Invoke-WebRequest http://127.0.0.1:8099/api/info -UseBasicParsing
 ```
 
 ## 9. Traps

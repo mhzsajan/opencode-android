@@ -209,25 +209,32 @@ public class ServerService extends Service {
     /**
      * Resolver configuration for the bundled server.
      *
-     * The payload is Termux's glibc build, so glibc was compiled with Termux's
-     * resolver path baked in:
+     * Each payload's libc has its resolver path compiled in, so build.ps1
+     * patches it per architecture:
      *
+     *   aarch64, glibc (Termux's libc, 53-byte slot)
      *     /data/data/com.termux/files/usr/glibc/etc/resolv.conf
+     *       -> /data/data/app.opencode.standalone/files/resolv.conf   (52 chars)
      *
-     * Under app.opencode.standalone that directory does not exist, so
-     * res_init() finds no nameserver and every lookup fails ("Failed to fetch
-     * models.dev ... Unable to connect"). The env vars used in v1.3/v1.4
-     * (RESOLV_CONF, DNS_RESULT_ORDER, DNS_AUTO_FALLBACK) are not read by the
-     * binary at all - a strings scan of opencode-bin finds none of them.
+     *   x86_64, musl (ld-musl-x86_64.so.1, 16-byte slot)
+     *     /etc/resolv.conf
+     *       -> .resolv.conf
      *
-     * Fix: build.ps1 patches that one string in the bundled libc.so.6 to point
-     * at a file this app owns (/data/data/app.opencode.standalone/files/resolv.conf),
-     * and launch() writes the phone's live DNS servers there before spawning the
-     * server. Keep the patched path in sync with RESOLV_CONF below.
+     * The x86_64 slot cannot hold an app-private absolute path, so its patched
+     * name is relative: the libc resolves it against the child's cwd, which
+     * launch() sets to the project directory. writeResolvConf() writes the file
+     * into that directory too when the packaged payload is x86_64.
+     *
+     * Without this, res_init() finds no nameserver and every lookup fails
+     * ("Failed to fetch models.dev ... Unable to connect"). The env vars used in
+     * v1.3/v1.4 (RESOLV_CONF, DNS_RESULT_ORDER, DNS_AUTO_FALLBACK) are not read
+     * by the binary at all - a strings scan of opencode-bin finds none of them.
      */
     private static final String RESOLV_CONF = "resolv.conf";
+    /** Relative name patched into the x86_64 libc; resolved against the cwd. */
+    private static final String RESOLV_CONF_X64 = ".resolv.conf";
 
-    private void writeResolvConf() {
+    private void writeResolvConf(File project) {
         java.util.LinkedHashSet<String> servers = new java.util.LinkedHashSet<String>();
         try {
             android.net.ConnectivityManager cm =
@@ -264,12 +271,27 @@ public class ServerService extends Service {
         } catch (Throwable t) {
             Log.e(TAG, "cannot write resolv.conf", t);
         }
+
+        // The x86_64 libc's patched path is relative, so the file must sit in
+        // the child's cwd. launch() sets that to the project directory.
+        if (Installer.isX64(this) && project != null) {
+            File rel = new File(project, RESOLV_CONF_X64);
+            try {
+                FileOutputStream out = new FileOutputStream(rel);
+                out.write(sb.toString().getBytes("UTF-8"));
+                out.close();
+                Log.i(TAG, RESOLV_CONF_X64 + " -> " + rel.getAbsolutePath());
+            } catch (Throwable t) {
+                Log.e(TAG, "cannot write " + RESOLV_CONF_X64, t);
+            }
+        }
     }
 
     private boolean launch() {
         File lib = Installer.libDir(this);
         File ld = Installer.loader(this);
         File bin = Installer.binary(this);
+        File shim = Installer.shim(this);
         if (!ld.exists() || !bin.exists()) {
             Log.e(TAG, "payload missing, run Installer first");
             return false;
@@ -282,7 +304,7 @@ public class ServerService extends Service {
 
         // The bundled libc has this file's path compiled in (see RESOLV_CONF
         // above); without it glibc cannot resolve anything.
-        writeResolvConf();
+        writeResolvConf(project);
 
         // opencode v2's server requires HTTP Basic auth on /api/*. Give it a
         // fixed per-install password (rather than the random one it prints at
@@ -290,14 +312,28 @@ public class ServerService extends Service {
         // supplies it in onReceivedHttpAuthRequest.
         String password = ensurePassword();
 
-        ProcessBuilder pb = new ProcessBuilder(
-                ld.getAbsolutePath(),
-                bin.getAbsolutePath(),
-                "serve",
-                "--port", String.valueOf(PORT),
-                "--hostname", "127.0.0.1",
-                "--print-logs",
-                "--log-level", "info");
+        // --library-path is not redundant with LD_LIBRARY_PATH: on an x86_64
+        // image running a translated arm64 guest the env var never reaches the
+        // loader, while this flag does. Pass both.
+        //
+        // The x86_64 payload runs under the seccomp shim, which traces it and
+        // replays the syscalls this app's bionic-derived filter traps (see
+        // shim/shim.c). The aarch64 payload needs no such thing.
+        java.util.ArrayList<String> cmd = new java.util.ArrayList<String>();
+        if (shim != null) cmd.add(shim.getAbsolutePath());
+        cmd.add(ld.getAbsolutePath());
+        cmd.add("--library-path");
+        cmd.add(lib.getAbsolutePath());
+        cmd.add(bin.getAbsolutePath());
+        cmd.add("serve");
+        cmd.add("--port");
+        cmd.add(String.valueOf(PORT));
+        cmd.add("--hostname");
+        cmd.add("127.0.0.1");
+        cmd.add("--print-logs");
+        cmd.add("--log-level");
+        cmd.add("info");
+        ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(project);
         Map<String, String> env = pb.environment();
         env.clear();

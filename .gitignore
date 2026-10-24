@@ -10,10 +10,12 @@ build/
 sdk/
 *.jar
 
-# bundled runtime: 177 MB, exceeds GitHub's 100 MB per-file limit.
-# recreate with ./stage-assets.sh
-ocstandalone/assets/opencode-bin
-ocstandalone/assets/lib/
+# bundled runtimes: ~236 MB (arm64) and ~240 MB (x64) each exceed GitHub's
+# 100 MB per-file limit. Recreate with stage-assets-v2.ps1 / stage-assets-x64.ps1.
+# The x64 shim binary lives here too; it is produced from shim\shim.c by
+# shim\build.ps1 (ocstandalone\build.ps1 calls it when the file is absent).
+ocstandalone/assets/arm64/
+ocstandalone/assets/x64/
 
 # local scratch
 *.log
