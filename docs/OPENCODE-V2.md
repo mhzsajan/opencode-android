@@ -1,12 +1,13 @@
-# opencode v2 on Android — work in progress
+# opencode v2 on Android
 
-Updated 2026-10-24. **Branch `v2`.** `master` still ships the verified v1 engine
-(opencode 1.18.34 in v1.4); this document tracks the upgrade to opencode v2.
+Updated 2026-10-24. Merged into `master` at `9422ba5` and shipped as the pre-release
+**[v1.5](https://github.com/mhzsajan/opencode-android/releases/tag/v1.5)**; the v1.4 release
+(opencode 1.18.34) remains the stable fallback.
 
-**Status: verified on the phone, 2026-10-24.** The auth blocker is fixed and the on-device
-checklist in section 5 passed end to end — proxy 200s, UI renders real data, a free model
-answered. Not yet released: the app is still `versionCode 5` / `versionName 1.4`, so the
-version bump and the pre-release tag are the remaining step (section 5.6).
+**Status: verified on the phone and released, 2026-10-24.** The auth blocker is fixed and the
+on-device checklist in section 5 passed end to end — proxy 200s, UI renders real data, a free
+model answered. Shipped as `versionCode 6` / `versionName 1.5`. **The release is arm64 only**
+(section 6): the bundled payload is aarch64, so it does not serve on the x86_64 emulator yet.
 
 ## 1. What v2 is and where it lives
 
@@ -97,8 +98,9 @@ Offline checks: signed, `classes.dex` contains `AuthProxy`, payload `assets/open
 ## 5. On-device test: passed (SM-S908E, 2026-10-24 20:32)
 
 Installed over the existing app with `adb install -r` → `Success`; data kept, payload
-re-extracted (`payload-v3`). Verified afterwards: exactly **114 751 180 bytes**,
-`versionCode=5`, `versionName=1.4`, `targetSdk=28`, signer `84:E7:50:…:10:6C:31`.
+re-extracted (`payload-v3`). The tested build was the code-5 build of 2026-10-24 20:32; the
+released artifact is the same code rebuilt as `versionCode=6` / `versionName=1.5`
+(`targetSdk=28`, signer `84:E7:50:…:10:6C:31`, same 114 751 180 bytes).
 
 | check | result |
 |---|---|
@@ -120,8 +122,11 @@ Through the proxy: `/api/info` 200, `/api/session` 200, `/api/event` 200, `/api/
 `/api/agent` 200 (8 KB), `/api/project` 200. The 200/401 **pair** is what proves the proxy is
 supplying the credentials, rather than a cached cookie making the UI look fine.
 
-Remaining: bump to **1.5** (versionCode 6 — the verified build is still code 5, same as v1.4),
-tag a **pre-release** with this APK, and note v1 stays at 1.4.
+**Released 2026-10-24** as `versionCode 6` / `versionName 1.5`, pre-release tag
+**[v1.5](https://github.com/mhzsajan/opencode-android/releases/tag/v1.5)** —
+`opencode-solo.apk`, 114 751 180 bytes, SHA-256
+`1CAF406246EB9A7E5592A6CC3311C20DB8BA1FB0AA7F40E911CB6E0CFBF79344`. Same signing key as v1.4,
+so it updates in place. The release notes say plainly that it is arm64 only.
 
 ## 6. Architecture: arm64 phone, x86_64 emulator
 
@@ -138,29 +143,52 @@ The APK contains **no native libs** — it is pure Java. The only arch-bound par
   ```
 
   There is no cross-architecture TCG fallback on Windows, so `Pixel_10_ARM64_API_37` is inert.
-  Android's `libndk_translation` does not rescue it either: that translates arm64 *native
-  libraries* loaded inside an app process, not an `execve()` of a glibc ELF.
-- **The x86_64 emulator runs the app but not this payload**, because the payload is an aarch64
-  glibc ELF (`ld-linux-aarch64.so.1` + Termux glibc in `assets/lib`).
+- **On the x86_64 image the arm64 payload does load and execute — but cannot serve.** This
+  contradicts the earlier assumption that `libndk_translation` never handles `execve()`; measured
+  on `emulator-5554` (API 37, `ro.product.cpu.abilist=x86_64,arm64-v8a`,
+  `ro.dalvik.vm.native.bridge=libndk_translation.so`):
+
+  | step | result |
+  |---|---|
+  | `ld-linux-aarch64.so.1 --version` | runs (audit log grants `execute` on the app-data file) |
+  | `ld … ./opencode-bin --version` | **fails**: `opencode-bin: error while loading shared libraries: libc.so.6` |
+  | `ld --library-path <dir> ./opencode-bin --version` | **works** → `opencode v2.1.4`, Bun banner `Bun v1.4.4 … Linux arm64`, prints stats |
+  | same, then continue to `serve` | `panic: Unexpected futex_wait() return code: -2 - ENOENT` → `Bun has crashed` |
+
+  Two facts worth keeping:
+  - **`LD_LIBRARY_PATH` is invisible to the translated guest**, even though the native loader
+    honours `--library-path`. This also explains the app's own `libc.so.6: cannot open shared
+    object file` loop on the emulator, which is not a missing file.
+  - **Translated arm64 is a dead end for the server.** Bun's runtime needs a working futex; the
+    translator does not provide one. A native x86_64 payload is therefore required, not optional.
 
 So payload testing needs the physical phone (arm64); UI/Java work can use `Pixel_10_API_37`
 (x86_64, API 37). To make the emulator a full dev target, stage the x86_64 payload —
-`@opencode/cli-linux-x64@2.1.4` exists on npm and is **240 417 179 bytes** unpacked, the same
-Bun single-file shape as the arm64 package. What that needs:
+`@opencode/cli-linux-x64@2.1.4` exists on npm and is **240 416 944 bytes** unpacked
+(`0x3e` ELF, verified), the same Bun single-file shape as the arm64 package. What that needs:
 
 1. `assets/opencode-bin` ← the x64 binary;
 2. `assets/lib/` ← x86_64 glibc (`ld-linux-x86-64.so.2`, `libc.so.6`, `libm`, `libdl`,
    `libpthread`) taken from an Ubuntu/Debian base rootfs, **not** the host's Windows DLLs;
-3. the resolver patch re-applied to the new `libc.so.6` (`build.ps1` patches a compiled-in termux
-   path and throws if the original string is absent — that guard must be re-run, not bypassed);
+3. the resolver patch re-applied to the new `libc.so.6`;
 4. `Installer.java` hardcodes `ld-linux-aarch64.so.1` in two places (the lib list and the loader
    getter), so the loader name has to be chosen from `Build.SUPPORTED_ABIS` instead of spelled
-   literally.
+   literally; `ServerService.launch()` should also pass `--library-path` explicitly instead of
+   relying on `LD_LIBRARY_PATH` (see above).
+
+**The resolver patch is the live blocker for x64.** Ubuntu 24.04's glibc 2.39 has
+`/etc/resolv.conf` as a 16-byte slot (15 chars + NUL) followed immediately by `LOCALDOMAIN`, and
+the ARM build's trick — rewriting a long compiled-in Termux path to
+`/data/data/app.opencode.standalone/files/resolv.conf` (53 chars) — only works because Termux's
+slot is 48+ bytes. A 53-char absolute path cannot fit in 16 bytes, so the x64 build needs either a
+shorter path (≤15 chars, which no app-writable location has) or a **relative** path such as
+`resolv.conf`, which works only if the child's cwd is the directory holding the file — and the
+child's cwd is currently the user's project directory, which is not app-private.
 
 A dual-arch APK would carry ~490 MB of payload, so prefer **two payload variants** over one fat
-APK. Whether a glibc x86_64 ELF actually runs under the emulator's kernel is still **unproven** —
-`targetSdk 28` allows `execve()` of app-data files, but that was only ever demonstrated with
-aarch64.
+APK. Whether a native glibc x86_64 ELF executes under the emulator is still unproven, but the
+mechanism is the normal one (`targetSdk 28` permits `execve()` of app-data files, the kernel ABI
+is plain Linux x86_64, and no translation layer is involved).
 
 ## 7. Open questions
 
@@ -168,8 +196,13 @@ aarch64.
   but that path is untested.
 - v2 migrated the existing v1 data directory on first start (`database migration ...` in
   logcat). Keep a backup of a working v1 install's data if a downgrade must be tested.
-- App versioning: **1.5 (code 6) is the next build** now that v2 is verified; the v1.4 release
-  stays the stable fallback.
-- Can a glibc x86_64 payload run under the x86_64 emulator? Believed yes (`targetSdk 28` permits
-  `execve()` of app-data files, and the kernel ABI is ordinary Linux x86_64) but unproven — the
-  aarch64 path is the only demonstrated one. This is the blocker for emulator-based payload work.
+- App versioning: **1.5 (code 6) is released** as a pre-release; the v1.4 release stays the
+  stable fallback. The next build carries the x86_64 payload and should be 1.6 (code 7).
+- Can a native glibc x86_64 payload serve under the x86_64 emulator? Believed yes — it is plain
+  Linux x86_64 with no translation layer, and `targetSdk 28` permits `execve()` of app-data
+  files — but unproven. The open sub-problem is the **resolver path** (section 6): Ubuntu
+  glibc's 16-byte slot cannot hold an app-private absolute path, so it needs a relative path plus
+  a controlled cwd, or a glibc build whose compiled-in path is long enough to rewrite.
+- Is `Bun`'s DNS via glibc `getaddrinfo` on x64 too (hence the resolver patch), or does the x64
+  build use its own resolver? The arm64 build demonstrably needed the patch; do not assume x64
+  behaves the same without testing a real hostname lookup.

@@ -10,7 +10,7 @@ disconnect.
 | | State |
 |---|---|
 | `ocstandalone` v1.4 — `master` | **Working on-device, released.** ~62 MB, opencode 1.18.34. The long-standing upstream-network bug is fixed — the bundled glibc's compiled-in resolver path now points at an app-writable `resolv.conf`. See `docs/STANDALONE-NETWORK.md`. |
-| `ocstandalone` v2 — merged into `master` at `9422ba5` | **Working on-device, verified 2026-10-24, not yet released.** 114 751 180 bytes, opencode 2.1.4, in-app loopback auth proxy on 4097. Still `versionCode 5` / `1.4`; needs the 1.5 bump and a pre-release tag. See `docs/OPENCODE-V2.md`. |
+| `ocstandalone` v2 — merged into `master` at `9422ba5` | **Working on-device, released as pre-release [v1.5](https://github.com/mhzsajan/opencode-android/releases/tag/v1.5) on 2026-10-24** (code 6, 114 751 180 bytes, opencode 2.1.4, loopback auth proxy on 4097). arm64 only — the bundled payload is aarch64, so it does not serve on the x86_64 emulator yet. See `docs/OPENCODE-V2.md`. |
 | `octermux` (Termux-backed, ~30 KB) | Builds clean; main-thread `ping()` bug fixed and Windows build added 2026-10-24. **Not yet tested on device** (Termux had just been reinstalled and has no opencode CLI). |
 | `oclaunch` | Legacy, superseded by `octermux`. Unchanged. |
 
@@ -43,10 +43,11 @@ named a nonexistent path, which is why env-var-dependent builds failed).
 |---|---|---|---|
 | `ocstandalone/build/opencode-solo.apk` (v1.4, `master` before v2) | 1.4 (code 5) | 62 121 676 | `93570CE4008169A24CD985E438E5246F8198C71C45D62E4DF4E0DCF9D30C253C` |
 | `ocstandalone/build/opencode-solo.apk` (**v2, verified on device**) | 1.4 (code 5) | 114 751 180 | `CC90EE85C931E97BFE165A92C39AD432F84329220F3FD988D62D7E169BBAC86A` |
+| `ocstandalone/build/opencode-solo.apk` (**v1.5, released**) | 1.5 (code 6) | 114 751 180 | `1CAF406246EB9A7E5592A6CC3311C20DB8BA1FB0AA7F40E911CB6E0CFBF79344` |
 | `octermux/build/opencode-termux.apk` | 1.1 (code 2) | 30 003 | `B227814DB61C2FD31E5431A1DD298E756679F48BF29FEA8AB7EF25AEE403F9AA` |
 
-Both `ocstandalone` builds report code 5 / 1.4 — the v2 build is the same version number, so
-`adb install -r` upgrades in place. The next build should be **1.5 / code 6**.
+The v2 build shipped as **1.5 / code 6** on 2026-10-24 and was built from the same payload; it
+installs over 1.4 without uninstalling (same signing key).
 
 Checks: `apksigner verify` passes; `aapt2 dump badging` shows package/versions; the APK contains
 `classes.dex` plus the full `assets/opencode-bin` and `assets/lib/*` payload (with forward-slash
@@ -105,24 +106,25 @@ Install: `adb install -r <apk>`. Reinstalling over the working app keeps its dat
 
 ## 5. Next steps
 
-1. **Ship v2 as 1.5.** Bump to `versionCode 6` / `versionName 1.5`, rebuild, tag a **pre-release**
-   with the APK, and say in the notes that v1 stays at 1.4 as the fallback. The verified build is
-   still code 5, so shipping as-is makes the release indistinguishable from the v1.4 install it
-   replaces.
-2. **Make the emulator a full dev target** — the blocker for working without the phone. Stage the
-   x86_64 payload (`@opencode/cli-linux-x64@2.1.4`, 240 417 179 bytes unpacked) with x86_64 glibc,
-   re-run the resolver-patch guard against the new `libc.so.6`, and select the loader from
-   `Build.SUPPORTED_ABIS` in `Installer.java`, which hardcodes `ld-linux-aarch64.so.1` in two
-   places. Whether a glibc x86_64 ELF executes under the emulator is unproven.
-3. **Restore Termux for `octermux`** (only if that path is wanted): install the opencode CLI in
+1. **Make the emulator a full dev target** — the blocker for working without the phone, and the
+   only reason `v1.5` is arm64-only. Stage the x86_64 payload
+   (`@opencode/cli-linux-x64@2.1.4`, 240 417 179 bytes unpacked) with x86_64 glibc, re-apply the
+   resolver patch (Ubuntu glibc's slot for `/etc/resolv.conf` is only 16 bytes, so the absolute
+   app path used for arm64 **cannot** fit — the path has to be shorter or relative), and select
+   the loader from `Build.SUPPORTED_ABIS` in `Installer.java`, which hardcodes
+   `ld-linux-aarch64.so.1` in two places. Two things are already proven on the emulator: a native
+   x86_64 glibc ELF is the only way forward (translated arm64 panics on `futex_wait`), and
+   `LD_LIBRARY_PATH` is invisible to a translated guest while the loader's `--library-path` works —
+   so the app should pass `--library-path` explicitly rather than trusting the env var.
+2. **Restore Termux for `octermux`** (only if that path is wanted): install the opencode CLI in
    Termux, write `~/.shortcuts/oc-server`, set `allow-external-apps=true`, install
    `octermux/build/opencode-termux.apk`, grant the RUN_COMMAND permission. The app code is fixed
    but has never been run on this freshly reinstalled Termux.
-4. **Provider key (optional).** Free models on the `opencode` provider work with no key (that is
+3. **Provider key (optional).** Free models on the `opencode` provider work with no key (that is
    how the on-device chat test passed). A paid provider needs a key: either paste it into the
    app's setup screen (writes `filesDir/home/.local/share/opencode/auth.json`) or add it from
    the opencode UI.
-5. Possible polish: reopen the setup screen from inside the app (currently only shown on first
+4. Possible polish: reopen the setup screen from inside the app (currently only shown on first
    run), and an in-app way to change the project directory.
 
 ## 6. Keystore (2026-10-24)

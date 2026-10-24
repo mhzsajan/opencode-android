@@ -5,8 +5,8 @@
      files dir. Termux is targetSdk 28 for the same reason. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="app.opencode.standalone"
-    android:versionCode="5"
-    android:versionName="1.4">
+    android:versionCode="6"
+    android:versionName="1.5">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
