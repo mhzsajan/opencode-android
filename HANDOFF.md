@@ -58,6 +58,14 @@ of the released file matched the installed one (length, compressed size, CRC32) 
    against npm produced a byte-identical `opencode-bin` and shim.
 8. Docs: `docs/OPENCODE-V2.md` §6–8 rewritten with the seccomp findings and the evidence;
    `README.md`, `docs/DEV-ENVIRONMENT.md` corrected (the emulator **can** run the payload now).
+9. **Account sign-in (new).** Setup now drives the server's device-code OAuth flow for the
+   `opencode` (OpenCode Console) integration: a "Sign in with OpenCode" button shows the code
+   (e.g. `VBHT-BLJP`) and verification URL, polls until complete/failed/expired, and on success
+   shows "Connected: ..." with a "Change account" button. Manual key paste remains as a fallback
+   (with Paste / Show-Hide). MainActivity gained a top-right gear button that reopens Setup, so
+   sign-in/sign-out is reachable from inside the running app. Verified on the emulator: begin +
+   poll returns a live device code and opens the browser; the final approval step needs a real
+   OpenCode account.
 
 ## 3. Restore a payload and build
 
