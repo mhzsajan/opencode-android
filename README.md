@@ -1,4 +1,4 @@
-# opencode on Android
+# Opencode on Android
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/mhzsajan/opencode-android)](https://github.com/mhzsajan/opencode-android/releases)
