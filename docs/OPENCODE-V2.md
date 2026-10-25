@@ -83,7 +83,7 @@ for a while, which is why anything relying on the env var failed). See
 ```powershell
 $env:ANDROID_HOME = 'G:\dev\android-sdk'
 $env:JAVA_HOME    = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot'
-$env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
+$env:KS_ALIAS='<alias>'; $env:KS_PASS='<password>'
 
 # once: glibc runtime from the v1.4 release asset + v2 binary from npm
 .\ocstandalone\stage-assets-v2.ps1 -FromApk ..\opencode-android-v1.4.apk

@@ -78,7 +78,7 @@ powershell -File .\ocstandalone\stage-assets-v2.ps1  -FromApk C:\path\opencode-s
 # x86_64 (needs a released x64 APK as the musl lib source; builds the shim too)
 powershell -File .\ocstandalone\stage-assets-x64.ps1 -FromApk C:\path\opencode-solo-x64.apk
 
-$env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
+$env:KS_ALIAS='<alias>'; $env:KS_PASS='<password>'
 $env:ANDROID_HOME='G:\dev\android-sdk'; $env:GRADLE_USER_HOME='G:\dev\gradle-home'
 powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1              # arm64
 powershell -ExecutionPolicy Bypass -File .\ocstandalone\build.ps1 -Arch x64    # x86_64
@@ -171,7 +171,7 @@ be generated. Every release since v1.4 uses the same certificate:
 ocstandalone\build\launcher.keystore   (gitignored)
 backup   : G:\dev\keystores\launcher.keystore    <- outside every repo; do not delete
 alias    : opencode
-password : opencode
+password : <your keystore password>
 DN       : CN=opencode-android, O=mhzsajan, C=NP
 valid    : 2026-10-24 .. 2054-03-11
 SHA-256  : 84:E7:50:34:D2:46:02:99:76:EB:2A:6B:33:CE:99:AD:E4:9D:BC:89:05:AB:6A:B3:CA:B3:52:D9:F8:10:6C:31

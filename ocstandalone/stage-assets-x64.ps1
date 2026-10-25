@@ -24,7 +24,7 @@
 #   .\stage-assets-x64.ps1 -LibDir  C:\path\to\lib          # already-extracted libs
 #   .\stage-assets-x64.ps1 -Version 2.1.4
 #
-# Then: $env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
+# Then: $env:KS_ALIAS='opencode'; $env:KS_PASS='<password>'
 #       powershell -ExecutionPolicy Bypass -File .\build.ps1 -Arch x64
 
 param(

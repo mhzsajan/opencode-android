@@ -17,7 +17,7 @@
 #   .\stage-assets-v2.ps1 -Version 2.1.4
 #   .\stage-assets-v2.ps1 -FromApk C:\path\opencode-android-v1.5.apk
 #
-# Then: $env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
+# Then: $env:KS_ALIAS='opencode'; $env:KS_PASS='<password>'
 #       powershell -ExecutionPolicy Bypass -File .\build.ps1
 #
 # NOTE: the build script patches the bundled libc's resolver path, so the

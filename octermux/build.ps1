@@ -10,7 +10,7 @@
 #   - a signing keystore             (KS / ocstandalone\build\launcher.keystore)
 #
 # Usage:
-#   $env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
+#   $env:KS_ALIAS='opencode'; $env:KS_PASS='<password>'
 #   powershell -ExecutionPolicy Bypass -File .\octermux\build.ps1
 #
 # Optional: -Keystore <path> to sign with a specific keystore.

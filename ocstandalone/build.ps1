@@ -9,7 +9,7 @@
 #   - signing keystore: .\build\launcher.keystore              (keep a copy outside the repo!)
 #
 # Usage:
-#   $env:KS_ALIAS='opencode'; $env:KS_PASS='opencode'
+#   $env:KS_ALIAS='opencode'; $env:KS_PASS='<password>'
 #   powershell -ExecutionPolicy Bypass -File build.ps1                 # arm64 -> opencode-solo.apk
 #   powershell -ExecutionPolicy Bypass -File build.ps1 -Arch x64       # x86_64 -> opencode-solo-x64.apk
 
