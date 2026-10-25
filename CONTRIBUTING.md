@@ -9,8 +9,8 @@ welcome, but please read this first.
 - Open an issue first for anything larger than a small fix, so we can agree on
   the approach. Drive-by PRs that change behaviour without discussion are usually
   rejected.
-- Check `HANDOFF.md` and `docs/OPENCODE-V2.md` — they contain the hard-won
-  facts about this codebase (seccomp, payloads, resolver patching, traps). Most
+- Check `docs/OPENCODE-V2.md` and `AGENTS.md` — they contain the hard-won facts
+  about this codebase (seccomp, payloads, resolver patching, traps). Most
   "obvious" fixes have already been tried and failed; reading first saves time.
 
 ## Building
