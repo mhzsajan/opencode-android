@@ -10,6 +10,8 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
@@ -22,6 +24,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -99,6 +102,26 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
         root.addView(status, slp);
 
+        // Native entry point to the account / setup screen, since the running app
+        // is a WebView and the served web UI cannot host our sign-in flow. The
+        // Setup activity contains the OpenCode account sign-in / sign-out UI.
+        Button accountBtn = new Button(this);
+        accountBtn.setText("\u2699"); // gear
+        accountBtn.setTextSize(16);
+        accountBtn.setTextColor(0xFFFFFFFF);
+        accountBtn.setBackgroundColor(0x80000000);
+        accountBtn.setPadding(dp(10), dp(4), dp(10), dp(4));
+        accountBtn.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                openSetup();
+            }
+        });
+        FrameLayout.LayoutParams ablp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        ablp.setMargins(0, dp(8), dp(8), 0);
+        root.addView(accountBtn, ablp);
+
         setContentView(root);
 
         // First run goes through Setup so permissions and the provider key are
@@ -117,6 +140,33 @@ public class MainActivity extends Activity {
     /** Back into Setup, to change permissions or the provider key later. */
     public void openSetup() {
         startActivity(new Intent(this, Setup.class));
+    }
+
+    private int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density);
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Native overflow menu: the running app is a WebView, so this is the
+        // only place to surface account/permission actions without touching the
+        // served web UI. Setup (opened here) now contains the OpenCode account
+        // sign-in / sign-out flow as well as the provider-key field.
+        menu.add(Menu.NONE, 1, Menu.NONE, "Account (sign in / out)");
+        menu.add(Menu.NONE, 2, Menu.NONE, "Setup (permissions, keys)");
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case 1:
+            case 2:
+                openSetup();
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
     }
 
     /**
