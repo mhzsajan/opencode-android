@@ -301,15 +301,23 @@ public class Setup extends Activity {
         right.setOrientation(LinearLayout.VERTICAL);
         right.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
 
-        TextView state = text("", 12, 0xFF8E8E93);
+        TextView state = text("", 12, 0xFF7BD88F);
         state.setGravity(Gravity.END);
+        state.setText("\u2713"); // checkmark when allowed
+        state.setVisibility(View.GONE);
         right.addView(state);
         stateViews[i] = state;
 
         Button b = new Button(this);
         b.setText("Allow");
         b.setTextSize(12);
-        b.setPadding(dp(12), dp(6), dp(12), dp(6));
+        b.setTextColor(0xFFFFFFFF);
+        GradientDrawable bbg = new GradientDrawable();
+        bbg.setColor(0xFF2A2A2E);
+        bbg.setCornerRadius(dp(8));
+        bbg.setStroke(dp(1), 0xFF3B82F6);
+        b.setBackground(bbg);
+        b.setPadding(dp(14), dp(6), dp(14), dp(6));
         b.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 ask(i);
@@ -350,6 +358,14 @@ public class Setup extends Activity {
 
         Button b = new Button(this);
         b.setText("Open settings");
+        b.setTextSize(12);
+        b.setTextColor(0xFFFFFFFF);
+        GradientDrawable osbg = new GradientDrawable();
+        osbg.setColor(0xFF2A2A2E);
+        osbg.setCornerRadius(dp(8));
+        osbg.setStroke(dp(1), 0xFF3B82F6);
+        b.setBackground(osbg);
+        b.setPadding(dp(12), dp(6), dp(12), dp(6));
         b.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 try {
@@ -400,6 +416,12 @@ public class Setup extends Activity {
 
         signInBtn = new Button(this);
         signInBtn.setText("Sign in with OpenCode");
+        signInBtn.setTextColor(0xFFFFFFFF);
+        GradientDrawable sibg = new GradientDrawable();
+        sibg.setColor(0xFF3B82F6);
+        sibg.setCornerRadius(dp(8));
+        signInBtn.setBackground(sibg);
+        signInBtn.setPadding(dp(12), dp(10), dp(12), dp(10));
         signInBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 startSignIn();
@@ -759,6 +781,14 @@ public class Setup extends Activity {
 
         Button paste = new Button(this);
         paste.setText("Paste");
+        paste.setTextSize(12);
+        paste.setTextColor(0xFFFFFFFF);
+        GradientDrawable pbg = new GradientDrawable();
+        pbg.setColor(0xFF2A2A2E);
+        pbg.setCornerRadius(dp(8));
+        pbg.setStroke(dp(1), 0xFF3B82F6);
+        paste.setBackground(pbg);
+        paste.setPadding(dp(12), dp(6), dp(12), dp(6));
         paste.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 try {
@@ -776,6 +806,14 @@ public class Setup extends Activity {
 
         final Button showHide = new Button(this);
         showHide.setText("Show");
+        showHide.setTextSize(12);
+        showHide.setTextColor(0xFFFFFFFF);
+        GradientDrawable shbg = new GradientDrawable();
+        shbg.setColor(0xFF2A2A2E);
+        shbg.setCornerRadius(dp(8));
+        shbg.setStroke(dp(1), 0xFF3B82F6);
+        showHide.setBackground(shbg);
+        showHide.setPadding(dp(12), dp(6), dp(12), dp(6));
         showHide.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 if (keyField.getInputType() == (android.text.InputType.TYPE_CLASS_TEXT
@@ -796,6 +834,13 @@ public class Setup extends Activity {
 
         Button save = new Button(this);
         save.setText("Save key");
+        save.setTextColor(0xFFFFFFFF);
+        GradientDrawable svbg = new GradientDrawable();
+        svbg.setColor(0xFF2A2A2E);
+        svbg.setCornerRadius(dp(8));
+        svbg.setStroke(dp(1), 0xFF3B82F6);
+        save.setBackground(svbg);
+        save.setPadding(dp(12), dp(10), dp(12), dp(10));
         save.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 saveKey();
@@ -874,12 +919,12 @@ public class Setup extends Activity {
             TextView state = (TextView) tag[2];
             if (ok) {
                 granted++;
-                state.setText("allowed");
+                state.setText("\u2713");
                 state.setTextColor(0xFF7BD88F);
+                state.setVisibility(View.VISIBLE);
                 b.setVisibility(View.GONE);
             } else {
-                state.setText("not allowed");
-                state.setTextColor(0xFFE0A458);
+                state.setVisibility(View.GONE);
                 b.setVisibility(View.VISIBLE);
             }
         }
