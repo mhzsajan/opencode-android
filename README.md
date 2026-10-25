@@ -1,5 +1,9 @@
 # opencode on Android
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/mhzsajan/opencode-android)](https://github.com/mhzsajan/opencode-android/releases)
+[![Contributing](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 Latest release: **[v1.6](https://github.com/mhzsajan/opencode-android/releases/tag/v1.6)** (pre-release) —
 opencode **2.1.4** with a loopback auth proxy, in **two payload variants**: arm64 for phones and
 x86_64 for the Android emulator. Both were verified end to end (chat and the agent's shell tool).
@@ -156,6 +160,15 @@ adb logcat -s octermux:*         # this app only logs the ping/load cycle
 ```
 
 The embedded server also writes `filesDir/home/server.log`, which is not readable over adb.
+
+## License & contributing
+
+This project is released under the [MIT License](LICENSE).
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Please open an issue before starting
+anything larger than a small fix, and read `HANDOFF.md` / `docs/OPENCODE-V2.md`
+first; most "obvious" fixes have already been tried.
 
 ## Repository layout
 
