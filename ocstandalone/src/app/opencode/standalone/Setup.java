@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -69,6 +70,7 @@ public class Setup extends Activity {
     private TextView keyNote;
     private EditKey keyField;
     private Button continueBtn;
+    private View[] rowBoxes;
 
     // OpenCode account (device OAuth) state.
     private TextView accountNote;
@@ -152,32 +154,73 @@ public class Setup extends Activity {
         scroll.addView(col, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView title = text("Set up opencode solo", 22, 0xFFFFFFFF);
-        title.setPadding(0, 0, 0, dp(8));
+        TextView title = text("Set up opencode solo", 26, 0xFFFFFFFF);
+        title.setPadding(0, 0, 0, dp(4));
         col.addView(title);
 
-        TextView blurb = text("This app runs the opencode coding agent on your phone. "
-                + "Grant what you want it to touch — everything here is optional and "
-                + "changeable later from this same screen.", 14, 0xFFA0A0A6);
+        TextView blurb = text("Runs the opencode coding agent on your phone. "
+                + "Grant what you want it to touch — everything is optional and "
+                + "changeable later from the gear icon.", 13, 0xFF8E8E93);
         blurb.setLineSpacing(0, 1.25f);
         blurb.setPadding(0, 0, 0, dp(20));
         col.addView(blurb);
 
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        col.addView(list);
+        GradientDrawable listBg = new GradientDrawable();
+        listBg.setColor(0xFF151518);
+        listBg.setCornerRadius(dp(12));
+        listBg.setStroke(dp(1), 0xFF2A2A2E);
+        list.setBackground(listBg);
+        list.setPadding(dp(4), dp(4), dp(4), dp(4));
+        col.addView(list, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        rowBoxes = new View[items.length];
         for (int i = 0; i < items.length; i++) {
-            list.addView(row(i));
+            View r = row(i);
+            rowBoxes[i] = r;
+            list.addView(r);
+            if (i < items.length - 1) {
+                View div = new View(this);
+                div.setBackgroundColor(0xFF2A2A2E);
+                list.addView(div, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)));
+            }
         }
+
+        // Grant-all shortcut.
+        Button grantAll = new Button(this);
+        grantAll.setText("Grant all permissions");
+        grantAll.setTextSize(13);
+        grantAll.setTextColor(0xFFFFFFFF);
+        GradientDrawable gabg = new GradientDrawable();
+        gabg.setColor(0xFF2A2A2E);
+        gabg.setCornerRadius(dp(10));
+        grantAll.setBackground(gabg);
+        grantAll.setPadding(dp(12), dp(10), dp(12), dp(10));
+        grantAll.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                for (int i = 0; i < items.length; i++) ask(i);
+            }
+        });
+        LinearLayout.LayoutParams galp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        galp.setMargins(0, dp(10), 0, 0);
+        col.addView(grantAll, galp);
 
         // All-files access is special: it is not a runtime permission, it is a
         // special app-access setting. It is the one that actually lets the agent
         // edit files outside its own sandbox, so it gets its own row.
         col.addView(storageRow());
 
-        col.addView(accountSection());
-        col.addView(keySection());
+        LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sectionLp.setMargins(0, dp(12), 0, 0);
+
+        col.addView(accountSection(), sectionLp);
+        col.addView(orDivider());
+        col.addView(keySection(), sectionLp);
 
         summary = text("", 13, 0xFF8E8E93);
         summary.setPadding(0, dp(16), 0, dp(8));
@@ -185,6 +228,12 @@ public class Setup extends Activity {
 
         continueBtn = new Button(this);
         continueBtn.setText("Start opencode");
+        continueBtn.setTextColor(0xFFFFFFFF);
+        GradientDrawable cdbg = new GradientDrawable();
+        cdbg.setColor(0xFF3B82F6);
+        cdbg.setCornerRadius(dp(10));
+        continueBtn.setBackground(cdbg);
+        continueBtn.setPadding(dp(12), dp(14), dp(12), dp(14));
         continueBtn.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 saveKey();
@@ -194,8 +243,10 @@ public class Setup extends Activity {
                 finish();
             }
         });
-        col.addView(continueBtn, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.setMargins(0, dp(20), 0, 0);
+        col.addView(continueBtn, clp);
 
         TextView later = text("You can change any of this later by reopening setup.", 12, 0xFF6E6E73);
         later.setGravity(Gravity.CENTER);
@@ -206,49 +257,82 @@ public class Setup extends Activity {
         refresh();
     }
 
+    private String iconFor(String label) {
+        if (label.startsWith("Files")) return "\uD83D\uDDC2";
+        if (label.startsWith("Photos")) return "\uD83D\uDDBC";
+        if (label.startsWith("Music")) return "\uD83C\uDFB5";
+        if (label.startsWith("Media")) return "\uD83C\uDFAC";
+        if (label.startsWith("Camera")) return "\uD83D\uDCF7";
+        if (label.startsWith("Contacts")) return "\uD83D\uDCD2";
+        if (label.startsWith("Location")) return "\uD83D\uDCCD";
+        if (label.startsWith("Nearby")) return "\uD83D\uDD17";
+        if (label.startsWith("Phone")) return "\uD83D\uDCF1";
+        if (label.startsWith("Microphone")) return "\uD83C\uDF99";
+        return "\u2022";
+    }
+
     private View row(final int i) {
         LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, dp(14), 0, dp(14));
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setPadding(dp(12), dp(12), dp(12), dp(12));
 
-        LinearLayout head = new LinearLayout(this);
-        head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView ic = text(iconFor(items[i].label), 20, 0xFFFFFFFF);
+        ic.setPadding(0, 0, dp(12), 0);
+        box.addView(ic, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView name = text(items[i].label, 16, 0xFFFFFFFF);
-        head.addView(name, new LinearLayout.LayoutParams(0,
+        LinearLayout mid = new LinearLayout(this);
+        mid.setOrientation(LinearLayout.VERTICAL);
+        mid.setPadding(0, 0, dp(8), 0);
+
+        TextView name = text(items[i].label, 15, 0xFFFFFFFF);
+        name.setTypeface(null, android.graphics.Typeface.BOLD);
+        mid.addView(name);
+
+        TextView why = text(items[i].why, 12, 0xFF8E8E93);
+        why.setPadding(0, dp(2), 0, 0);
+        mid.addView(why);
+
+        box.addView(mid, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView state = text("", 13, 0xFF8E8E93);
-        state.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        state.setPadding(dp(10), 0, 0, 0);
-        head.addView(state);
+        LinearLayout right = new LinearLayout(this);
+        right.setOrientation(LinearLayout.VERTICAL);
+        right.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+
+        TextView state = text("", 12, 0xFF8E8E93);
+        state.setGravity(Gravity.END);
+        right.addView(state);
         stateViews[i] = state;
-
-        box.addView(head);
-
-        TextView why = text(items[i].why, 13, 0xFF8E8E93);
-        why.setPadding(0, dp(2), 0, dp(8));
-        box.addView(why);
 
         Button b = new Button(this);
         b.setText("Allow");
+        b.setTextSize(12);
+        b.setPadding(dp(12), dp(6), dp(12), dp(6));
         b.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 ask(i);
             }
         });
-        box.addView(b, new LinearLayout.LayoutParams(
+        right.addView(b, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
         box.setTag(new Object[]{items[i], b, state});
+
+        box.addView(right, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return box;
     }
 
     private View storageRow() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, dp(14), 0, dp(14));
+        box.setPadding(dp(12), dp(12), dp(12), dp(12));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF151518);
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), 0xFF2A2A2E);
+        box.setBackground(bg);
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -291,9 +375,14 @@ public class Setup extends Activity {
     private View accountSection() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, dp(20), 0, 0);
+        box.setPadding(dp(16), dp(16), dp(16), dp(16));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF151518);
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), 0xFF2A2A2E);
+        box.setBackground(bg);
 
-        box.addView(text("OpenCode account", 16, 0xFFFFFFFF));
+        box.addView(text("OpenCode account", 18, 0xFFFFFFFF));
         TextView why = text("Sign in with your OpenCode account to use your Console "
                 + "or Go subscription without pasting a key. The device flow shows a "
                 + "code to enter on opencode.ai; this app never sees your password. "
@@ -619,12 +708,39 @@ public class Setup extends Activity {
         }).start();
     }
 
+    private View orDivider() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(18), 0, dp(18));
+
+        View left = new View(this);
+        left.setBackgroundColor(0xFF2A2A2E);
+        row.addView(left, new LinearLayout.LayoutParams(0, dp(1), 1f));
+
+        TextView or = text("OR", 13, 0xFF8E8E93);
+        or.setPadding(dp(16), 0, dp(16), 0);
+        or.setGravity(Gravity.CENTER);
+        row.addView(or);
+
+        View right = new View(this);
+        right.setBackgroundColor(0xFF2A2A2E);
+        row.addView(right, new LinearLayout.LayoutParams(0, dp(1), 1f));
+
+        return row;
+    }
+
     private View keySection() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, dp(20), 0, 0);
+        box.setPadding(dp(16), dp(16), dp(16), dp(16));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xFF151518);
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(1), 0xFF2A2A2E);
+        box.setBackground(bg);
 
-        box.addView(text("Provider key", 16, 0xFFFFFFFF));
+        box.addView(text("Provider key", 18, 0xFFFFFFFF));
         TextView why = text("opencode needs an API key to talk to a model. "
                 + "Stored on this phone only. You can also add providers later from "
                 + "inside the app.", 13, 0xFF8E8E93);
@@ -752,7 +868,7 @@ public class Setup extends Activity {
         for (int i = 0; i < items.length; i++) {
             Item it = items[i];
             boolean ok = allGranted(it);
-            ViewGroup box = (ViewGroup) list.getChildAt(i);
+            ViewGroup box = (ViewGroup) rowBoxes[i];
             Object[] tag = (Object[]) box.getTag();
             Button b = (Button) tag[1];
             TextView state = (TextView) tag[2];
